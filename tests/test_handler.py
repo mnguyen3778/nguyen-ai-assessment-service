@@ -33,6 +33,14 @@ def valid_event():
     }
 
 
+def event_with_origin(origin, header_name="Origin"):
+    event = valid_event()
+    event["headers"] = {
+        header_name: origin,
+    }
+    return event
+
+
 class FakeBedrockClient:
     def __init__(self):
         self.converse_called = False
@@ -79,6 +87,31 @@ class AssessmentHandlerTests(unittest.TestCase):
         self.assertFalse(body["modelInvoked"])
         self.assertFalse(body["persisted"])
 
+    def test_validation_errors_include_localhost_cors_headers(self):
+        response = handle_assessment(
+            {
+                "body": "{",
+                "headers": {
+                    "Origin": "http://localhost:3000",
+                },
+            }
+        )
+
+        self.assertEqual(response["statusCode"], 400)
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Origin"],
+            "http://localhost:3000",
+        )
+        self.assertEqual(response["headers"]["Vary"], "Origin")
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Headers"],
+            "Authorization,Content-Type",
+        )
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Methods"],
+            "OPTIONS,POST",
+        )
+
     def test_valid_requests_return_200(self):
         response = handle_assessment(valid_event())
         body = json.loads(response["body"])
@@ -91,6 +124,42 @@ class AssessmentHandlerTests(unittest.TestCase):
         self.assertEqual(body["recommendations"], [])
         self.assertFalse(body["modelInvoked"])
         self.assertFalse(body["persisted"])
+
+    def test_successful_response_allows_production_origin_case_insensitively(self):
+        response = handle_assessment(
+            event_with_origin("https://nguyen-ai.com", header_name="origin")
+        )
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Origin"],
+            "https://nguyen-ai.com",
+        )
+        self.assertEqual(response["headers"]["Content-Type"], "application/json")
+        self.assertEqual(response["headers"]["Vary"], "Origin")
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Headers"],
+            "Authorization,Content-Type",
+        )
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Methods"],
+            "OPTIONS,POST",
+        )
+
+    def test_unapproved_origin_does_not_receive_allow_origin_header(self):
+        response = handle_assessment(event_with_origin("https://example.com"))
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertNotIn("Access-Control-Allow-Origin", response["headers"])
+        self.assertEqual(response["headers"]["Vary"], "Origin")
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Headers"],
+            "Authorization,Content-Type",
+        )
+        self.assertEqual(
+            response["headers"]["Access-Control-Allow-Methods"],
+            "OPTIONS,POST",
+        )
 
     def test_assessment_route_does_not_invoke_bedrock_or_dynamodb(self):
         fake_boto3 = FakeBoto3()
