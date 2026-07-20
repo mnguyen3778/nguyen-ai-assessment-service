@@ -82,6 +82,22 @@ aws lambda update-function-code \
 See `docs/deployment-guide.md` for IAM, API Gateway, Cognito authorizer, and
 CORS setup.
 
+## Release Artifact Handling
+
+GitHub is the source of truth for source code, documentation, tests,
+infrastructure definitions, and release history. AWS runs the production
+workload.
+
+Release ZIP files are deployment artifacts, not source artifacts. They should be
+created during the release process, uploaded to the approved S3 Release Archive
+bucket, and referenced from the release record or deployment runbook.
+
+`deployment.zip` is a temporary local build artifact. It must never be committed
+to Git.
+
+See `docs/release-management.md` for release packaging, artifact storage,
+versioning, rollback, and tagging guidance.
+
 ## API Contract
 
 ### Request

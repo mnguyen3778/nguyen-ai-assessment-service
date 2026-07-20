@@ -1,4 +1,23 @@
+# Python bytecode and test artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local build and deployment artifacts
+build/
+dist/
+deployment.zip
+deployment-*.zip
+
+# Local environment and editor files
 .DS_Store
+.vscode/
+.idea/
+.env
+.env.*
+
+# Logs
+*.log
