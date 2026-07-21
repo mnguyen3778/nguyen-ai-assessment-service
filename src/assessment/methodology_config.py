@@ -67,6 +67,12 @@ class ConfidenceLevelConfig:
 
 
 @dataclass(frozen=True)
+class ExecutiveSummarySectionConfig:
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
 class ServiceConfig:
     id: str
     label: str
@@ -97,6 +103,7 @@ class BusinessDecisionMethodologyConfig:
     recommendation_priority_factors: Mapping[str, RecommendationPriorityFactorConfig]
     confidence_factors: Mapping[str, ConfidenceFactorConfig]
     confidence_levels: Mapping[str, ConfidenceLevelConfig]
+    executive_summary_sections: Mapping[str, ExecutiveSummarySectionConfig]
     services: Mapping[str, ServiceConfig]
     questions: Mapping[str, QuestionConfig]
     placeholder_question_weights: Mapping[str, float]
@@ -116,6 +123,10 @@ def validate_methodology_config(
     )
     _validate_mapping_keys("confidence factor", config.confidence_factors)
     _validate_mapping_keys("confidence level", config.confidence_levels)
+    _validate_mapping_keys(
+        "executive summary section",
+        config.executive_summary_sections,
+    )
     _validate_mapping_keys("service", config.services)
     _validate_mapping_keys("question", config.questions)
     _validate_mapping_keys("placeholder threshold", config.placeholder_thresholds)
@@ -154,6 +165,7 @@ def validate_methodology_config(
         config.recommendation_priority_factors,
     )
     _validate_rank_order("Confidence level", config.confidence_levels)
+    _validate_executive_summary_sections(config.executive_summary_sections)
     _validate_placeholder_thresholds(config.placeholder_thresholds)
 
 
@@ -208,6 +220,25 @@ def _validate_recommendation_priority_factors(
         missing_ids = RECOMMENDATION_PRIORITY_FACTOR_IDS - factor_ids
         raise ValueError(
             "Missing recommendation priority factor: "
+            f"{sorted(missing_ids)[0]}"
+        )
+
+
+def _validate_executive_summary_sections(
+    sections: Mapping[str, ExecutiveSummarySectionConfig],
+) -> None:
+    section_ids = frozenset(sections)
+    if section_ids != EXECUTIVE_SUMMARY_SECTION_IDS:
+        unknown_ids = section_ids - EXECUTIVE_SUMMARY_SECTION_IDS
+        if unknown_ids:
+            raise ValueError(
+                "Unknown executive summary section: "
+                f"{sorted(unknown_ids)[0]}"
+            )
+
+        missing_ids = EXECUTIVE_SUMMARY_SECTION_IDS - section_ids
+        raise ValueError(
+            "Missing executive summary section: "
             f"{sorted(missing_ids)[0]}"
         )
 
@@ -402,6 +433,43 @@ CONFIDENCE_LEVELS = _map_by_id(
         ConfidenceLevelConfig("low", "Low", 1),
         ConfidenceLevelConfig("moderate", "Moderate", 2),
         ConfidenceLevelConfig("high", "High", 3),
+    )
+)
+
+
+EXECUTIVE_SUMMARY_SECTION_IDS = frozenset(
+    {
+        "readiness-overview",
+        "confidence-context",
+        "priority-context",
+        "evidence-traceability",
+        "limitations",
+    }
+)
+
+
+EXECUTIVE_SUMMARY_SECTIONS = _map_by_id(
+    (
+        ExecutiveSummarySectionConfig(
+            "readiness-overview",
+            "Readiness Overview",
+        ),
+        ExecutiveSummarySectionConfig(
+            "confidence-context",
+            "Confidence Context",
+        ),
+        ExecutiveSummarySectionConfig(
+            "priority-context",
+            "Priority Context",
+        ),
+        ExecutiveSummarySectionConfig(
+            "evidence-traceability",
+            "Evidence Traceability",
+        ),
+        ExecutiveSummarySectionConfig(
+            "limitations",
+            "Limitations",
+        ),
     )
 )
 
@@ -866,6 +934,7 @@ BUSINESS_DECISION_METHODOLOGY = BusinessDecisionMethodologyConfig(
     recommendation_priority_factors=RECOMMENDATION_PRIORITY_FACTORS,
     confidence_factors=CONFIDENCE_FACTORS,
     confidence_levels=CONFIDENCE_LEVELS,
+    executive_summary_sections=EXECUTIVE_SUMMARY_SECTIONS,
     services=SERVICES,
     questions=QUESTIONS,
     placeholder_question_weights=PLACEHOLDER_QUESTION_WEIGHTS,

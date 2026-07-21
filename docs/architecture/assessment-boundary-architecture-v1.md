@@ -283,6 +283,11 @@ Current state:
 - Current recommendation priority behavior is limited to configured priority
   levels, configured priority factors, source metadata, and explicit limitation
   metadata.
+- Executive Summary Foundation is implemented as a deterministic consumer of
+  the internal `BusinessReadinessSnapshot`, `ConfidenceEvaluation`,
+  `RecommendationPriorityEvaluation`, and methodology configuration.
+- Current executive summary behavior is limited to configured summary sections,
+  source metadata, and explicit limitation metadata.
 
 Intentional limitations:
 
@@ -290,7 +295,9 @@ Intentional limitations:
 - Final confidence-level assignment methodology is not implemented.
 - Final recommendation priority assignment methodology is not implemented.
 - Recommendation generation is not implemented.
-- Executive Summary Foundation is not implemented.
+- Final executive summary methodology is not implemented.
+- Executive narrative generation is not implemented.
+- Executive report generation is not implemented.
 - Executive recommendations are not implemented.
 - Governed service decisions are not implemented.
 - Evidence ingestion is not implemented in the Assessment Service.

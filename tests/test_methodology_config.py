@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from assessment.methodology_config import (  # noqa: E402
     AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
+    ExecutiveSummarySectionConfig,
     METHODOLOGY_VERSION,
     QuestionConfig,
     RecommendationPriorityFactorConfig,
@@ -37,6 +38,7 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertEqual(len(config.recommendation_priority_factors), 6)
         self.assertEqual(len(config.confidence_factors), 5)
         self.assertEqual(len(config.confidence_levels), 3)
+        self.assertEqual(len(config.executive_summary_sections), 5)
 
     def test_question_catalog_maps_every_question_to_known_vocabulary(self):
         config = BUSINESS_DECISION_METHODOLOGY
@@ -81,6 +83,11 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertIn("low", config.confidence_levels)
         self.assertIn("moderate", config.confidence_levels)
         self.assertIn("high", config.confidence_levels)
+        self.assertIn("readiness-overview", config.executive_summary_sections)
+        self.assertIn("confidence-context", config.executive_summary_sections)
+        self.assertIn("priority-context", config.executive_summary_sections)
+        self.assertIn("evidence-traceability", config.executive_summary_sections)
+        self.assertIn("limitations", config.executive_summary_sections)
         self.assertIn("service.assessment-only", config.services)
         self.assertIn("service.managed-ai-services", config.services)
 
@@ -202,6 +209,39 @@ class MethodologyConfigTests(unittest.TestCase):
                     RecommendationPriorityFactorConfig(
                         "business-impact",
                         "Duplicate Business Impact",
+                    ),
+                )
+            )
+
+    def test_validation_rejects_unknown_executive_summary_section(self):
+        config = BUSINESS_DECISION_METHODOLOGY
+        sections = dict(config.executive_summary_sections)
+        sections["unknown-section"] = ExecutiveSummarySectionConfig(
+            "unknown-section",
+            "Unknown Section",
+        )
+        invalid_config = replace(
+            config,
+            executive_summary_sections=MappingProxyType(sections),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unknown executive summary section",
+        ):
+            validate_methodology_config(invalid_config)
+
+    def test_duplicate_executive_summary_section_ids_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Duplicate methodology id"):
+            _map_by_id(
+                (
+                    ExecutiveSummarySectionConfig(
+                        "readiness-overview",
+                        "Readiness Overview",
+                    ),
+                    ExecutiveSummarySectionConfig(
+                        "readiness-overview",
+                        "Duplicate Readiness Overview",
                     ),
                 )
             )
