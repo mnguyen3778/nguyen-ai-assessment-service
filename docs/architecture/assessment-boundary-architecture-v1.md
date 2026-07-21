@@ -274,11 +274,16 @@ Current state:
 - The Business Readiness Snapshot exists internally as a projection of
   `DecisionEvaluationResult`.
 - The Business Readiness Snapshot is not exposed through the API.
+- Confidence Methodology Foundation is implemented as a deterministic consumer
+  of the internal `BusinessReadinessSnapshot`.
+- Current confidence behavior is limited to the deterministic foundation.
 
 Intentional limitations:
 
-- Confidence methodology is not implemented.
-- Recommendation priority is not implemented.
+- Final confidence formulas are not implemented.
+- Final confidence-level assignment methodology is not implemented.
+- Recommendation Priority Foundation is not implemented.
+- Executive Summary Foundation is not implemented.
 - Executive recommendations are not implemented.
 - Governed service decisions are not implemented.
 - Evidence ingestion is not implemented in the Assessment Service.
