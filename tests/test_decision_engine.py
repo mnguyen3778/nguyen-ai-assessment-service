@@ -16,10 +16,14 @@ from assessment.decision_engine import (  # noqa: E402
 from assessment.methodology_config import BUSINESS_DECISION_METHODOLOGY  # noqa: E402
 
 
-def valid_configured_answers(value=100):
+def valid_configured_answers(scale_value=4, numeric_value=100):
     return {
-        question_id: value
-        for question_id in BUSINESS_DECISION_METHODOLOGY.questions
+        question_id: (
+            numeric_value
+            if question.expected_answer_type == "numeric"
+            else scale_value
+        )
+        for question_id, question in BUSINESS_DECISION_METHODOLOGY.questions.items()
     }
 
 
@@ -42,7 +46,7 @@ class DecisionEngineTests(unittest.TestCase):
         )
 
     def test_build_question_evaluations_resolves_configured_metadata(self):
-        evaluations = build_question_evaluations(valid_configured_answers(75))
+        evaluations = build_question_evaluations(valid_configured_answers(3))
         evaluation_by_id = {
             evaluation.question_id: evaluation
             for evaluation in evaluations
@@ -58,6 +62,90 @@ class DecisionEngineTests(unittest.TestCase):
             BUSINESS_DECISION_METHODOLOGY.placeholder_question_weights[question.id],
         )
         self.assertEqual(evaluation.normalized_score, 75)
+
+    def test_build_question_evaluations_normalizes_numeric_answers(self):
+        evaluations = build_question_evaluations(
+            valid_configured_answers(scale_value=0, numeric_value=50)
+        )
+        evaluation_by_id = {
+            evaluation.question_id: evaluation
+            for evaluation in evaluations
+        }
+
+        self.assertEqual(
+            evaluation_by_id["q.automation.manual-volume"].normalized_score,
+            50,
+        )
+
+    def test_evaluate_assessment_includes_traceable_explanation_metadata(self):
+        result = evaluate_assessment(
+            valid_configured_answers(scale_value=3, numeric_value=80)
+        )
+        explanation = result.explanation
+
+        self.assertIsNotNone(explanation)
+        self.assertEqual(
+            explanation.evaluated_dimensions,
+            tuple(sorted(BUSINESS_DECISION_METHODOLOGY.readiness_dimensions)),
+        )
+        self.assertEqual(
+            len(explanation.contributing_questions),
+            len(BUSINESS_DECISION_METHODOLOGY.questions),
+        )
+        self.assertIn(
+            "q.ai.governance.owner",
+            explanation.contributing_questions,
+        )
+        self.assertEqual(
+            explanation.applied_weights["q.ai.governance.owner"],
+            BUSINESS_DECISION_METHODOLOGY.placeholder_question_weights[
+                "q.ai.governance.owner"
+            ],
+        )
+
+        question = BUSINESS_DECISION_METHODOLOGY.questions["q.ai.governance.owner"]
+        question_explanation = explanation.question_explanations[
+            "q.ai.governance.owner"
+        ]
+        self.assertEqual(question_explanation.question_id, question.id)
+        self.assertEqual(
+            question_explanation.readiness_dimension,
+            question.readiness_dimension,
+        )
+        self.assertEqual(
+            question_explanation.evidence_category,
+            question.evidence_category,
+        )
+        self.assertEqual(
+            question_explanation.weight_category,
+            question.weight_category,
+        )
+        self.assertEqual(question_explanation.normalized_score, 75)
+
+        dimension = result.dimensions["ai-readiness"]
+        dimension_explanation = explanation.dimension_explanations["ai-readiness"]
+        self.assertEqual(
+            dimension_explanation.contributing_questions,
+            dimension.contributing_questions,
+        )
+        self.assertEqual(
+            dimension_explanation.applied_weights["q.ai.governance.owner"],
+            question_explanation.applied_weight,
+        )
+        self.assertAlmostEqual(
+            dimension_explanation.normalized_score,
+            dimension.normalized_score,
+        )
+
+    def test_evaluation_explanation_is_immutable(self):
+        result = evaluate_assessment(valid_configured_answers())
+        explanation = result.explanation
+
+        self.assertIsNotNone(explanation)
+        with self.assertRaises(TypeError):
+            explanation.applied_weights["q.ai.governance.owner"] = 2
+        with self.assertRaises(TypeError):
+            explanation.question_explanations["q.ai.governance.owner"] = None
 
     def test_evaluate_assessment_rejects_unknown_question_id(self):
         answers = valid_configured_answers()
@@ -78,6 +166,13 @@ class DecisionEngineTests(unittest.TestCase):
         answers["q.ai.governance.owner"] = "ready"
 
         with self.assertRaisesRegex(ValueError, "must be numeric"):
+            evaluate_assessment(answers)
+
+    def test_evaluate_assessment_rejects_out_of_range_answer(self):
+        answers = valid_configured_answers()
+        answers["q.ai.governance.owner"] = 5
+
+        with self.assertRaisesRegex(ValueError, "between 0 and 4"):
             evaluate_assessment(answers)
 
     def test_evaluate_assessment_rejects_invalid_configured_weight(self):
@@ -106,7 +201,7 @@ class DecisionEngineTests(unittest.TestCase):
             evaluate_assessment(valid_configured_answers(), invalid_config)
 
     def test_evaluate_assessment_is_deterministic_for_same_answers(self):
-        answers = valid_configured_answers(80)
+        answers = valid_configured_answers(scale_value=3, numeric_value=80)
 
         self.assertEqual(evaluate_assessment(answers), evaluate_assessment(answers))
 
@@ -158,6 +253,30 @@ class DecisionEngineTests(unittest.TestCase):
         security_dimension = result.dimensions["security-readiness"]
         self.assertEqual(security_dimension.question_count, 1)
         self.assertAlmostEqual(security_dimension.normalized_score, 25)
+
+        explanation = result.explanation
+        self.assertIsNotNone(explanation)
+        self.assertEqual(
+            explanation.evaluated_dimensions,
+            ("ai-readiness", "security-readiness"),
+        )
+        self.assertEqual(
+            explanation.applied_weights,
+            {
+                "q.ai.governance.owner": 3,
+                "q.ai.strategy.business-goals": 1,
+                "q.security.identity.mfa": 2,
+            },
+        )
+        self.assertEqual(
+            explanation.dimension_explanations[
+                "ai-readiness"
+            ].contributing_questions,
+            (
+                "q.ai.governance.owner",
+                "q.ai.strategy.business-goals",
+            ),
+        )
 
     def test_evaluate_decision_is_deterministic_for_same_inputs(self):
         evaluations = (

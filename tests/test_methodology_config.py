@@ -8,6 +8,7 @@ from types import MappingProxyType
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from assessment.methodology_config import (  # noqa: E402
+    AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
     METHODOLOGY_VERSION,
     QuestionConfig,
@@ -40,6 +41,17 @@ class MethodologyConfigTests(unittest.TestCase):
             self.assertIn(question.readiness_dimension, config.readiness_dimensions)
             self.assertIn(question.expected_answer_type, config.answer_types)
             self.assertIn(question.weight_category, config.weight_categories)
+
+    def test_answer_type_ranges_define_normalizable_inputs(self):
+        answer_types = BUSINESS_DECISION_METHODOLOGY.answer_types
+
+        self.assertEqual(answer_types["scale-0-4"].minimum, 0)
+        self.assertEqual(answer_types["scale-0-4"].maximum, 4)
+        self.assertTrue(answer_types["scale-0-4"].is_normalizable)
+        self.assertEqual(answer_types["numeric"].minimum, 0)
+        self.assertEqual(answer_types["numeric"].maximum, 100)
+        self.assertTrue(answer_types["numeric"].is_normalizable)
+        self.assertFalse(answer_types["text-evidence"].is_normalizable)
 
     def test_required_methodology_identifiers_are_present(self):
         config = BUSINESS_DECISION_METHODOLOGY
@@ -142,6 +154,23 @@ class MethodologyConfigTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "key must match object id"):
+            validate_methodology_config(invalid_config)
+
+    def test_validation_rejects_invalid_answer_type_range(self):
+        config = BUSINESS_DECISION_METHODOLOGY
+        answer_types = dict(config.answer_types)
+        answer_types["scale-0-4"] = AnswerTypeConfig(
+            id="scale-0-4",
+            label="Scale 0-4",
+            minimum=4,
+            maximum=0,
+        )
+        invalid_config = replace(
+            config,
+            answer_types=MappingProxyType(answer_types),
+        )
+
+        with self.assertRaisesRegex(ValueError, "maximum"):
             validate_methodology_config(invalid_config)
 
 

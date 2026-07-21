@@ -19,6 +19,18 @@ class EvidenceCategoryConfig:
 
 
 @dataclass(frozen=True)
+class AnswerTypeConfig:
+    id: str
+    label: str
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @property
+    def is_normalizable(self) -> bool:
+        return self.minimum is not None and self.maximum is not None
+
+
+@dataclass(frozen=True)
 class QuestionConfig:
     id: str
     business_capability: str
@@ -60,7 +72,7 @@ class BusinessDecisionMethodologyConfig:
     version: str
     readiness_dimensions: Mapping[str, ReadinessDimensionConfig]
     evidence_categories: Mapping[str, EvidenceCategoryConfig]
-    answer_types: frozenset[str]
+    answer_types: Mapping[str, AnswerTypeConfig]
     weight_categories: frozenset[str]
     recommendation_priorities: Mapping[str, RecommendationPriorityConfig]
     services: Mapping[str, ServiceConfig]
@@ -80,8 +92,7 @@ def validate_methodology_config(
     _validate_mapping_keys("question", config.questions)
     _validate_mapping_keys("placeholder threshold", config.placeholder_thresholds)
 
-    if not config.answer_types:
-        raise ValueError("At least one answer type is required.")
+    _validate_mapping_keys("answer type", config.answer_types)
 
     if not config.weight_categories:
         raise ValueError("At least one weight category is required.")
@@ -108,6 +119,7 @@ def validate_methodology_config(
                 f"{question.weight_category}"
             )
 
+    _validate_answer_type_ranges(config.answer_types)
     _validate_placeholder_question_weights(config)
     _validate_priority_ranks(config.recommendation_priorities)
     _validate_placeholder_thresholds(config.placeholder_thresholds)
@@ -130,6 +142,22 @@ def _validate_priority_ranks(
     ranks = [priority.rank for priority in priorities.values()]
     if sorted(ranks) != list(range(1, len(ranks) + 1)):
         raise ValueError("Recommendation priority ranks must be contiguous.")
+
+
+def _validate_answer_type_ranges(
+    answer_types: Mapping[str, AnswerTypeConfig],
+) -> None:
+    for answer_type in answer_types.values():
+        if answer_type.minimum is None and answer_type.maximum is None:
+            continue
+        if answer_type.minimum is None or answer_type.maximum is None:
+            raise ValueError(
+                f"Answer type range must include minimum and maximum: {answer_type.id}"
+            )
+        if answer_type.maximum <= answer_type.minimum:
+            raise ValueError(
+                f"Answer type maximum must be greater than minimum: {answer_type.id}"
+            )
 
 
 def _validate_placeholder_question_weights(
@@ -230,15 +258,15 @@ EVIDENCE_CATEGORIES = _map_by_id(
 )
 
 
-ANSWER_TYPES = frozenset(
-    {
-        "scale-0-4",
-        "yes-no",
-        "single-select",
-        "multi-select",
-        "numeric",
-        "text-evidence",
-    }
+ANSWER_TYPES = _map_by_id(
+    (
+        AnswerTypeConfig("scale-0-4", "Scale 0-4", 0, 4),
+        AnswerTypeConfig("yes-no", "Yes/No"),
+        AnswerTypeConfig("single-select", "Single Select"),
+        AnswerTypeConfig("multi-select", "Multi Select"),
+        AnswerTypeConfig("numeric", "Numeric", 0, 100),
+        AnswerTypeConfig("text-evidence", "Text Evidence"),
+    )
 )
 
 

@@ -3,6 +3,7 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from assessment.methodology_config import (
+    AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
     BusinessDecisionMethodologyConfig,
     QuestionConfig,
@@ -12,12 +13,6 @@ from assessment.methodology_config import (
 
 MIN_NORMALIZED_SCORE = 0.0
 MAX_NORMALIZED_SCORE = 100.0
-NUMERIC_EVALUATION_ANSWER_TYPES = frozenset(
-    {
-        "scale-0-4",
-        "numeric",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -40,11 +35,40 @@ class DimensionEvaluation:
 
 
 @dataclass(frozen=True)
+class QuestionExplanation:
+    question_id: str
+    readiness_dimension: str
+    evidence_category: str
+    weight_category: str
+    applied_weight: float
+    normalized_score: float
+
+
+@dataclass(frozen=True)
+class DimensionExplanation:
+    dimension_id: str
+    contributing_questions: tuple[str, ...]
+    applied_weights: Mapping[str, float]
+    normalized_score: float
+    total_weight: float
+
+
+@dataclass(frozen=True)
+class EvaluationExplanation:
+    evaluated_dimensions: tuple[str, ...]
+    contributing_questions: tuple[str, ...]
+    applied_weights: Mapping[str, float]
+    question_explanations: Mapping[str, QuestionExplanation]
+    dimension_explanations: Mapping[str, DimensionExplanation]
+
+
+@dataclass(frozen=True)
 class DecisionEvaluationResult:
     overall_score: float
     total_weight: float
     question_count: int
     dimensions: Mapping[str, DimensionEvaluation]
+    explanation: EvaluationExplanation | None = None
 
 
 def evaluate_decision(
@@ -59,6 +83,7 @@ def evaluate_decision(
         total_weight=sum(evaluation.weight for evaluation in evaluations),
         question_count=len(evaluations),
         dimensions=MappingProxyType(dimensions),
+        explanation=_build_evaluation_explanation(evaluations, dimensions),
     )
 
 
@@ -114,28 +139,83 @@ def build_question_evaluation(
     ),
 ) -> QuestionEvaluation:
     question = load_question_definition(question_id, methodology_config)
-    validate_answer(question, answer)
+    answer_type = load_answer_type(question, methodology_config)
+    validate_answer(question, answer, answer_type)
 
     return QuestionEvaluation(
         question_id=question.id,
         readiness_dimension=question.readiness_dimension,
-        normalized_score=_evaluation_score(question, answer),
+        normalized_score=normalize_answer(question, answer, answer_type),
         weight=methodology_config.placeholder_question_weights[question.id],
         evidence_category=question.evidence_category,
         weight_category=question.weight_category,
     )
 
 
-def validate_answer(question: QuestionConfig, answer: object) -> None:
-    if question.expected_answer_type in NUMERIC_EVALUATION_ANSWER_TYPES:
-        if not _is_number(answer):
-            raise ValueError(f"Answer for {question.id} must be numeric.")
-        return
+def load_answer_type(
+    question: QuestionConfig,
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> AnswerTypeConfig:
+    try:
+        return methodology_config.answer_types[question.expected_answer_type]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown answer type for question {question.id}: "
+            f"{question.expected_answer_type}"
+        ) from exc
 
-    raise ValueError(
-        f"Question {question.id} answer type is not evaluable in this increment: "
-        f"{question.expected_answer_type}"
+
+def validate_answer(
+    question: QuestionConfig,
+    answer: object,
+    answer_type: AnswerTypeConfig,
+) -> None:
+    if not answer_type.is_normalizable:
+        raise ValueError(
+            f"Question {question.id} answer type is not evaluable in this increment: "
+            f"{question.expected_answer_type}"
+        )
+    if not _is_number(answer):
+        raise ValueError(f"Answer for {question.id} must be numeric.")
+    if not answer_type.minimum <= answer <= answer_type.maximum:
+        raise ValueError(
+            f"Answer for {question.id} must be between "
+            f"{answer_type.minimum:g} and {answer_type.maximum:g}."
+        )
+
+
+def normalize_answer(
+    question: QuestionConfig,
+    answer: object,
+    answer_type: AnswerTypeConfig,
+) -> float:
+    validate_answer(question, answer, answer_type)
+    if answer_type.minimum is None or answer_type.maximum is None:
+        raise ValueError(
+            f"Question {question.id} answer type is not normalizable: "
+            f"{question.expected_answer_type}"
+        )
+
+    return (
+        (float(answer) - answer_type.minimum)
+        / (answer_type.maximum - answer_type.minimum)
+        * MAX_NORMALIZED_SCORE
     )
+
+
+def _validate_answer_set(
+    answers: Mapping[str, object],
+    methodology_config: BusinessDecisionMethodologyConfig,
+) -> None:
+    unknown_question_ids = answers.keys() - methodology_config.questions.keys()
+    if unknown_question_ids:
+        raise ValueError(f"Unknown question ID: {sorted(unknown_question_ids)[0]}")
+
+    missing_question_ids = methodology_config.questions.keys() - answers.keys()
+    if missing_question_ids:
+        raise ValueError(f"Missing required question: {sorted(missing_question_ids)[0]}")
 
 
 def _aggregate_dimensions(
@@ -163,26 +243,52 @@ def _aggregate_dimensions(
     }
 
 
-def _validate_answer_set(
-    answers: Mapping[str, object],
-    methodology_config: BusinessDecisionMethodologyConfig,
-) -> None:
-    unknown_question_ids = answers.keys() - methodology_config.questions.keys()
-    if unknown_question_ids:
-        raise ValueError(f"Unknown question ID: {sorted(unknown_question_ids)[0]}")
+def _build_evaluation_explanation(
+    evaluations: tuple[QuestionEvaluation, ...],
+    dimensions: Mapping[str, DimensionEvaluation],
+) -> EvaluationExplanation:
+    sorted_evaluations = tuple(
+        sorted(evaluations, key=lambda evaluation: evaluation.question_id)
+    )
+    applied_weights = {
+        evaluation.question_id: evaluation.weight
+        for evaluation in sorted_evaluations
+    }
+    question_explanations = {
+        evaluation.question_id: QuestionExplanation(
+            question_id=evaluation.question_id,
+            readiness_dimension=evaluation.readiness_dimension,
+            evidence_category=evaluation.evidence_category,
+            weight_category=evaluation.weight_category,
+            applied_weight=evaluation.weight,
+            normalized_score=evaluation.normalized_score,
+        )
+        for evaluation in sorted_evaluations
+    }
+    dimension_explanations = {
+        dimension_id: DimensionExplanation(
+            dimension_id=dimension_id,
+            contributing_questions=dimension.contributing_questions,
+            applied_weights=MappingProxyType(
+                {
+                    question_id: applied_weights[question_id]
+                    for question_id in dimension.contributing_questions
+                }
+            ),
+            normalized_score=dimension.normalized_score,
+            total_weight=dimension.total_weight,
+        )
+        for dimension_id, dimension in sorted(dimensions.items())
+    }
 
-    missing_question_ids = methodology_config.questions.keys() - answers.keys()
-    if missing_question_ids:
-        raise ValueError(f"Missing required question: {sorted(missing_question_ids)[0]}")
-
-
-def _evaluation_score(question: QuestionConfig, answer: object) -> float:
-    if question.expected_answer_type in NUMERIC_EVALUATION_ANSWER_TYPES:
-        return float(answer)
-
-    raise ValueError(
-        f"Question {question.id} answer type is not evaluable in this increment: "
-        f"{question.expected_answer_type}"
+    return EvaluationExplanation(
+        evaluated_dimensions=tuple(sorted(dimensions)),
+        contributing_questions=tuple(
+            evaluation.question_id for evaluation in sorted_evaluations
+        ),
+        applied_weights=MappingProxyType(applied_weights),
+        question_explanations=MappingProxyType(question_explanations),
+        dimension_explanations=MappingProxyType(dimension_explanations),
     )
 
 
