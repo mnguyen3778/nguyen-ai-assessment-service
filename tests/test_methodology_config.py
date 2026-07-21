@@ -32,6 +32,8 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertEqual(len(config.questions), 48)
         self.assertEqual(len(config.services), 6)
         self.assertEqual(len(config.recommendation_priorities), 4)
+        self.assertEqual(len(config.confidence_factors), 5)
+        self.assertEqual(len(config.confidence_levels), 3)
 
     def test_question_catalog_maps_every_question_to_known_vocabulary(self):
         config = BUSINESS_DECISION_METHODOLOGY
@@ -64,6 +66,12 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertIn("governance", config.evidence_categories)
         self.assertIn("q.ai.governance.owner", config.questions)
         self.assertIn("q.business.executive-alignment", config.questions)
+        self.assertIn("assessment-completeness", config.confidence_factors)
+        self.assertIn("evidence-coverage", config.confidence_factors)
+        self.assertIn("business-certainty", config.confidence_factors)
+        self.assertIn("low", config.confidence_levels)
+        self.assertIn("moderate", config.confidence_levels)
+        self.assertIn("high", config.confidence_levels)
         self.assertIn("service.assessment-only", config.services)
         self.assertIn("service.managed-ai-services", config.services)
 
@@ -74,6 +82,13 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertEqual(priorities["high"].rank, 2)
         self.assertEqual(priorities["medium"].rank, 3)
         self.assertEqual(priorities["low"].rank, 4)
+
+    def test_confidence_levels_are_deterministically_ordered(self):
+        levels = BUSINESS_DECISION_METHODOLOGY.confidence_levels
+
+        self.assertEqual(levels["low"].rank, 1)
+        self.assertEqual(levels["moderate"].rank, 2)
+        self.assertEqual(levels["high"].rank, 3)
 
     def test_placeholder_thresholds_cover_full_score_range(self):
         thresholds = sorted(
@@ -135,6 +150,18 @@ class MethodologyConfigTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "priority ranks"):
+            validate_methodology_config(invalid_config)
+
+    def test_validation_rejects_non_contiguous_confidence_level_ranks(self):
+        config = BUSINESS_DECISION_METHODOLOGY
+        levels = dict(config.confidence_levels)
+        levels["high"] = replace(levels["high"], rank=5)
+        invalid_config = replace(
+            config,
+            confidence_levels=MappingProxyType(levels),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Confidence level ranks"):
             validate_methodology_config(invalid_config)
 
     def test_validation_rejects_mismatched_mapping_key(self):

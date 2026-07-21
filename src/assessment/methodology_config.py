@@ -48,6 +48,19 @@ class RecommendationPriorityConfig:
 
 
 @dataclass(frozen=True)
+class ConfidenceFactorConfig:
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
+class ConfidenceLevelConfig:
+    id: str
+    label: str
+    rank: int
+
+
+@dataclass(frozen=True)
 class ServiceConfig:
     id: str
     label: str
@@ -75,6 +88,8 @@ class BusinessDecisionMethodologyConfig:
     answer_types: Mapping[str, AnswerTypeConfig]
     weight_categories: frozenset[str]
     recommendation_priorities: Mapping[str, RecommendationPriorityConfig]
+    confidence_factors: Mapping[str, ConfidenceFactorConfig]
+    confidence_levels: Mapping[str, ConfidenceLevelConfig]
     services: Mapping[str, ServiceConfig]
     questions: Mapping[str, QuestionConfig]
     placeholder_question_weights: Mapping[str, float]
@@ -88,6 +103,8 @@ def validate_methodology_config(
     _validate_mapping_keys("readiness dimension", config.readiness_dimensions)
     _validate_mapping_keys("evidence category", config.evidence_categories)
     _validate_mapping_keys("recommendation priority", config.recommendation_priorities)
+    _validate_mapping_keys("confidence factor", config.confidence_factors)
+    _validate_mapping_keys("confidence level", config.confidence_levels)
     _validate_mapping_keys("service", config.services)
     _validate_mapping_keys("question", config.questions)
     _validate_mapping_keys("placeholder threshold", config.placeholder_thresholds)
@@ -121,7 +138,8 @@ def validate_methodology_config(
 
     _validate_answer_type_ranges(config.answer_types)
     _validate_placeholder_question_weights(config)
-    _validate_priority_ranks(config.recommendation_priorities)
+    _validate_rank_order("Recommendation priority", config.recommendation_priorities)
+    _validate_rank_order("Confidence level", config.confidence_levels)
     _validate_placeholder_thresholds(config.placeholder_thresholds)
 
 
@@ -136,12 +154,13 @@ def _validate_mapping_keys(name: str, values: Mapping[str, object]) -> None:
             raise ValueError(f"{name.title()} key must match object id: {key}")
 
 
-def _validate_priority_ranks(
-    priorities: Mapping[str, RecommendationPriorityConfig],
+def _validate_rank_order(
+    name: str,
+    values: Mapping[str, RecommendationPriorityConfig | ConfidenceLevelConfig],
 ) -> None:
-    ranks = [priority.rank for priority in priorities.values()]
+    ranks = [value.rank for value in values.values()]
     if sorted(ranks) != list(range(1, len(ranks) + 1)):
-        raise ValueError("Recommendation priority ranks must be contiguous.")
+        raise ValueError(f"{name} ranks must be contiguous.")
 
 
 def _validate_answer_type_ranges(
@@ -288,6 +307,41 @@ RECOMMENDATION_PRIORITIES = _map_by_id(
         RecommendationPriorityConfig("high", "High", 2),
         RecommendationPriorityConfig("medium", "Medium", 3),
         RecommendationPriorityConfig("low", "Low", 4),
+    )
+)
+
+
+CONFIDENCE_FACTORS = _map_by_id(
+    (
+        ConfidenceFactorConfig(
+            "assessment-completeness",
+            "Assessment Completeness",
+        ),
+        ConfidenceFactorConfig(
+            "answer-consistency",
+            "Answer Consistency",
+        ),
+        ConfidenceFactorConfig(
+            "evidence-coverage",
+            "Evidence Coverage",
+        ),
+        ConfidenceFactorConfig(
+            "response-quality",
+            "Response Quality",
+        ),
+        ConfidenceFactorConfig(
+            "business-certainty",
+            "Business Certainty",
+        ),
+    )
+)
+
+
+CONFIDENCE_LEVELS = _map_by_id(
+    (
+        ConfidenceLevelConfig("low", "Low", 1),
+        ConfidenceLevelConfig("moderate", "Moderate", 2),
+        ConfidenceLevelConfig("high", "High", 3),
     )
 )
 
@@ -749,6 +803,8 @@ BUSINESS_DECISION_METHODOLOGY = BusinessDecisionMethodologyConfig(
     answer_types=ANSWER_TYPES,
     weight_categories=WEIGHT_CATEGORIES,
     recommendation_priorities=RECOMMENDATION_PRIORITIES,
+    confidence_factors=CONFIDENCE_FACTORS,
+    confidence_levels=CONFIDENCE_LEVELS,
     services=SERVICES,
     questions=QUESTIONS,
     placeholder_question_weights=PLACEHOLDER_QUESTION_WEIGHTS,
