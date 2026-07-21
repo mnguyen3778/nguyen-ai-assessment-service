@@ -48,6 +48,12 @@ class RecommendationPriorityConfig:
 
 
 @dataclass(frozen=True)
+class RecommendationPriorityFactorConfig:
+    id: str
+    label: str
+
+
+@dataclass(frozen=True)
 class ConfidenceFactorConfig:
     id: str
     label: str
@@ -88,6 +94,7 @@ class BusinessDecisionMethodologyConfig:
     answer_types: Mapping[str, AnswerTypeConfig]
     weight_categories: frozenset[str]
     recommendation_priorities: Mapping[str, RecommendationPriorityConfig]
+    recommendation_priority_factors: Mapping[str, RecommendationPriorityFactorConfig]
     confidence_factors: Mapping[str, ConfidenceFactorConfig]
     confidence_levels: Mapping[str, ConfidenceLevelConfig]
     services: Mapping[str, ServiceConfig]
@@ -103,6 +110,10 @@ def validate_methodology_config(
     _validate_mapping_keys("readiness dimension", config.readiness_dimensions)
     _validate_mapping_keys("evidence category", config.evidence_categories)
     _validate_mapping_keys("recommendation priority", config.recommendation_priorities)
+    _validate_mapping_keys(
+        "recommendation priority factor",
+        config.recommendation_priority_factors,
+    )
     _validate_mapping_keys("confidence factor", config.confidence_factors)
     _validate_mapping_keys("confidence level", config.confidence_levels)
     _validate_mapping_keys("service", config.services)
@@ -139,6 +150,9 @@ def validate_methodology_config(
     _validate_answer_type_ranges(config.answer_types)
     _validate_placeholder_question_weights(config)
     _validate_rank_order("Recommendation priority", config.recommendation_priorities)
+    _validate_recommendation_priority_factors(
+        config.recommendation_priority_factors,
+    )
     _validate_rank_order("Confidence level", config.confidence_levels)
     _validate_placeholder_thresholds(config.placeholder_thresholds)
 
@@ -177,6 +191,25 @@ def _validate_answer_type_ranges(
             raise ValueError(
                 f"Answer type maximum must be greater than minimum: {answer_type.id}"
             )
+
+
+def _validate_recommendation_priority_factors(
+    factors: Mapping[str, RecommendationPriorityFactorConfig],
+) -> None:
+    factor_ids = frozenset(factors)
+    if factor_ids != RECOMMENDATION_PRIORITY_FACTOR_IDS:
+        unknown_ids = factor_ids - RECOMMENDATION_PRIORITY_FACTOR_IDS
+        if unknown_ids:
+            raise ValueError(
+                "Unknown recommendation priority factor: "
+                f"{sorted(unknown_ids)[0]}"
+            )
+
+        missing_ids = RECOMMENDATION_PRIORITY_FACTOR_IDS - factor_ids
+        raise ValueError(
+            "Missing recommendation priority factor: "
+            f"{sorted(missing_ids)[0]}"
+        )
 
 
 def _validate_placeholder_question_weights(
@@ -307,6 +340,33 @@ RECOMMENDATION_PRIORITIES = _map_by_id(
         RecommendationPriorityConfig("high", "High", 2),
         RecommendationPriorityConfig("medium", "Medium", 3),
         RecommendationPriorityConfig("low", "Low", 4),
+    )
+)
+
+
+RECOMMENDATION_PRIORITY_FACTOR_IDS = frozenset(
+    {
+        "business-impact",
+        "customer-impact",
+        "executive-urgency",
+        "risk-severity",
+        "dependency-role",
+        "confidence-level",
+    }
+)
+
+
+RECOMMENDATION_PRIORITY_FACTORS = _map_by_id(
+    (
+        RecommendationPriorityFactorConfig("business-impact", "Business Impact"),
+        RecommendationPriorityFactorConfig("customer-impact", "Customer Impact"),
+        RecommendationPriorityFactorConfig(
+            "executive-urgency",
+            "Executive Urgency",
+        ),
+        RecommendationPriorityFactorConfig("risk-severity", "Risk Severity"),
+        RecommendationPriorityFactorConfig("dependency-role", "Dependency Role"),
+        RecommendationPriorityFactorConfig("confidence-level", "Confidence Level"),
     )
 )
 
@@ -803,6 +863,7 @@ BUSINESS_DECISION_METHODOLOGY = BusinessDecisionMethodologyConfig(
     answer_types=ANSWER_TYPES,
     weight_categories=WEIGHT_CATEGORIES,
     recommendation_priorities=RECOMMENDATION_PRIORITIES,
+    recommendation_priority_factors=RECOMMENDATION_PRIORITY_FACTORS,
     confidence_factors=CONFIDENCE_FACTORS,
     confidence_levels=CONFIDENCE_LEVELS,
     services=SERVICES,

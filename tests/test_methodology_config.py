@@ -12,6 +12,8 @@ from assessment.methodology_config import (  # noqa: E402
     BUSINESS_DECISION_METHODOLOGY,
     METHODOLOGY_VERSION,
     QuestionConfig,
+    RecommendationPriorityFactorConfig,
+    _map_by_id,
     validate_methodology_config,
 )
 
@@ -32,6 +34,7 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertEqual(len(config.questions), 48)
         self.assertEqual(len(config.services), 6)
         self.assertEqual(len(config.recommendation_priorities), 4)
+        self.assertEqual(len(config.recommendation_priority_factors), 6)
         self.assertEqual(len(config.confidence_factors), 5)
         self.assertEqual(len(config.confidence_levels), 3)
 
@@ -69,6 +72,12 @@ class MethodologyConfigTests(unittest.TestCase):
         self.assertIn("assessment-completeness", config.confidence_factors)
         self.assertIn("evidence-coverage", config.confidence_factors)
         self.assertIn("business-certainty", config.confidence_factors)
+        self.assertIn("business-impact", config.recommendation_priority_factors)
+        self.assertIn("customer-impact", config.recommendation_priority_factors)
+        self.assertIn("executive-urgency", config.recommendation_priority_factors)
+        self.assertIn("risk-severity", config.recommendation_priority_factors)
+        self.assertIn("dependency-role", config.recommendation_priority_factors)
+        self.assertIn("confidence-level", config.recommendation_priority_factors)
         self.assertIn("low", config.confidence_levels)
         self.assertIn("moderate", config.confidence_levels)
         self.assertIn("high", config.confidence_levels)
@@ -163,6 +172,39 @@ class MethodologyConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Confidence level ranks"):
             validate_methodology_config(invalid_config)
+
+    def test_validation_rejects_unknown_recommendation_priority_factor(self):
+        config = BUSINESS_DECISION_METHODOLOGY
+        factors = dict(config.recommendation_priority_factors)
+        factors["unknown-factor"] = RecommendationPriorityFactorConfig(
+            "unknown-factor",
+            "Unknown Factor",
+        )
+        invalid_config = replace(
+            config,
+            recommendation_priority_factors=MappingProxyType(factors),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unknown recommendation priority factor",
+        ):
+            validate_methodology_config(invalid_config)
+
+    def test_duplicate_recommendation_priority_factor_ids_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Duplicate methodology id"):
+            _map_by_id(
+                (
+                    RecommendationPriorityFactorConfig(
+                        "business-impact",
+                        "Business Impact",
+                    ),
+                    RecommendationPriorityFactorConfig(
+                        "business-impact",
+                        "Duplicate Business Impact",
+                    ),
+                )
+            )
 
     def test_validation_rejects_mismatched_mapping_key(self):
         config = BUSINESS_DECISION_METHODOLOGY

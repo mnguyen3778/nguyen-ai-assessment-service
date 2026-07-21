@@ -277,12 +277,19 @@ Current state:
 - Confidence Methodology Foundation is implemented as a deterministic consumer
   of the internal `BusinessReadinessSnapshot`.
 - Current confidence behavior is limited to the deterministic foundation.
+- Recommendation Priority Foundation is implemented as a deterministic consumer
+  of the internal `BusinessReadinessSnapshot`, `ConfidenceEvaluation`, and
+  methodology configuration.
+- Current recommendation priority behavior is limited to configured priority
+  levels, configured priority factors, source metadata, and explicit limitation
+  metadata.
 
 Intentional limitations:
 
 - Final confidence formulas are not implemented.
 - Final confidence-level assignment methodology is not implemented.
-- Recommendation Priority Foundation is not implemented.
+- Final recommendation priority assignment methodology is not implemented.
+- Recommendation generation is not implemented.
 - Executive Summary Foundation is not implemented.
 - Executive recommendations are not implemented.
 - Governed service decisions are not implemented.
