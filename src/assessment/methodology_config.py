@@ -65,6 +65,7 @@ class BusinessDecisionMethodologyConfig:
     recommendation_priorities: Mapping[str, RecommendationPriorityConfig]
     services: Mapping[str, ServiceConfig]
     questions: Mapping[str, QuestionConfig]
+    placeholder_question_weights: Mapping[str, float]
     placeholder_thresholds: Mapping[str, PlaceholderThresholdConfig]
     output_schema: OutputSchemaConfig
 
@@ -107,6 +108,7 @@ def validate_methodology_config(
                 f"{question.weight_category}"
             )
 
+    _validate_placeholder_question_weights(config)
     _validate_priority_ranks(config.recommendation_priorities)
     _validate_placeholder_thresholds(config.placeholder_thresholds)
 
@@ -130,6 +132,36 @@ def _validate_priority_ranks(
         raise ValueError("Recommendation priority ranks must be contiguous.")
 
 
+def _validate_placeholder_question_weights(
+    config: BusinessDecisionMethodologyConfig,
+) -> None:
+    missing_weights = (
+        config.questions.keys()
+        - config.placeholder_question_weights.keys()
+    )
+    if missing_weights:
+        raise ValueError(
+            "Placeholder question weights missing question: "
+            f"{sorted(missing_weights)[0]}"
+        )
+
+    unknown_weights = (
+        config.placeholder_question_weights.keys()
+        - config.questions.keys()
+    )
+    if unknown_weights:
+        raise ValueError(
+            "Placeholder question weights contain unknown question: "
+            f"{sorted(unknown_weights)[0]}"
+        )
+
+    for question_id, weight in config.placeholder_question_weights.items():
+        if not _is_positive_number(weight):
+            raise ValueError(
+                f"Placeholder question weight must be greater than 0: {question_id}"
+            )
+
+
 def _validate_placeholder_thresholds(
     thresholds: Mapping[str, PlaceholderThresholdConfig],
 ) -> None:
@@ -148,6 +180,14 @@ def _validate_placeholder_thresholds(
 
     if expected_minimum != 101:
         raise ValueError("Placeholder thresholds must cover 0 through 100.")
+
+
+def _is_positive_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value > 0
+    )
 
 
 def _map_by_id(values):
@@ -626,6 +666,14 @@ QUESTIONS = _map_by_id(
 )
 
 
+PLACEHOLDER_QUESTION_WEIGHTS = MappingProxyType(
+    {
+        question_id: 1.0
+        for question_id in QUESTIONS
+    }
+)
+
+
 PLACEHOLDER_THRESHOLDS = _map_by_id(
     (
         PlaceholderThresholdConfig("not-ready", "Not Ready", 0, 24),
@@ -675,6 +723,7 @@ BUSINESS_DECISION_METHODOLOGY = BusinessDecisionMethodologyConfig(
     recommendation_priorities=RECOMMENDATION_PRIORITIES,
     services=SERVICES,
     questions=QUESTIONS,
+    placeholder_question_weights=PLACEHOLDER_QUESTION_WEIGHTS,
     placeholder_thresholds=PLACEHOLDER_THRESHOLDS,
     output_schema=OUTPUT_SCHEMA,
 )

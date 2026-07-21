@@ -1,17 +1,115 @@
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from assessment.decision_engine import (  # noqa: E402
     QuestionEvaluation,
+    build_question_evaluations,
+    evaluate_assessment,
     evaluate_decision,
 )
+from assessment.methodology_config import BUSINESS_DECISION_METHODOLOGY  # noqa: E402
+
+
+def valid_configured_answers(value=100):
+    return {
+        question_id: value
+        for question_id in BUSINESS_DECISION_METHODOLOGY.questions
+    }
 
 
 class DecisionEngineTests(unittest.TestCase):
+    def test_evaluate_assessment_maps_answers_through_methodology_config(self):
+        result = evaluate_assessment(valid_configured_answers())
+
+        self.assertEqual(
+            result.question_count,
+            len(BUSINESS_DECISION_METHODOLOGY.questions),
+        )
+        self.assertEqual(
+            set(result.dimensions),
+            set(BUSINESS_DECISION_METHODOLOGY.readiness_dimensions),
+        )
+        self.assertAlmostEqual(result.overall_score, 100)
+        self.assertEqual(
+            result.dimensions["ai-readiness"].question_count,
+            6,
+        )
+
+    def test_build_question_evaluations_resolves_configured_metadata(self):
+        evaluations = build_question_evaluations(valid_configured_answers(75))
+        evaluation_by_id = {
+            evaluation.question_id: evaluation
+            for evaluation in evaluations
+        }
+        question = BUSINESS_DECISION_METHODOLOGY.questions["q.ai.governance.owner"]
+        evaluation = evaluation_by_id["q.ai.governance.owner"]
+
+        self.assertEqual(evaluation.readiness_dimension, question.readiness_dimension)
+        self.assertEqual(evaluation.evidence_category, question.evidence_category)
+        self.assertEqual(evaluation.weight_category, question.weight_category)
+        self.assertEqual(
+            evaluation.weight,
+            BUSINESS_DECISION_METHODOLOGY.placeholder_question_weights[question.id],
+        )
+        self.assertEqual(evaluation.normalized_score, 75)
+
+    def test_evaluate_assessment_rejects_unknown_question_id(self):
+        answers = valid_configured_answers()
+        answers["q.unknown"] = 100
+
+        with self.assertRaisesRegex(ValueError, "Unknown question ID"):
+            evaluate_assessment(answers)
+
+    def test_evaluate_assessment_rejects_missing_required_question(self):
+        answers = valid_configured_answers()
+        del answers["q.ai.governance.owner"]
+
+        with self.assertRaisesRegex(ValueError, "Missing required question"):
+            evaluate_assessment(answers)
+
+    def test_evaluate_assessment_rejects_invalid_answer_type(self):
+        answers = valid_configured_answers()
+        answers["q.ai.governance.owner"] = "ready"
+
+        with self.assertRaisesRegex(ValueError, "must be numeric"):
+            evaluate_assessment(answers)
+
+    def test_evaluate_assessment_rejects_invalid_configured_weight(self):
+        weights = dict(BUSINESS_DECISION_METHODOLOGY.placeholder_question_weights)
+        weights["q.ai.governance.owner"] = 0
+        invalid_config = replace(
+            BUSINESS_DECISION_METHODOLOGY,
+            placeholder_question_weights=MappingProxyType(weights),
+        )
+
+        with self.assertRaisesRegex(ValueError, "weight"):
+            evaluate_assessment(valid_configured_answers(), invalid_config)
+
+    def test_evaluate_assessment_rejects_invalid_configured_readiness_dimension(self):
+        questions = dict(BUSINESS_DECISION_METHODOLOGY.questions)
+        questions["q.ai.governance.owner"] = replace(
+            questions["q.ai.governance.owner"],
+            readiness_dimension="unknown",
+        )
+        invalid_config = replace(
+            BUSINESS_DECISION_METHODOLOGY,
+            questions=MappingProxyType(questions),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unknown readiness dimension"):
+            evaluate_assessment(valid_configured_answers(), invalid_config)
+
+    def test_evaluate_assessment_is_deterministic_for_same_answers(self):
+        answers = valid_configured_answers(80)
+
+        self.assertEqual(evaluate_assessment(answers), evaluate_assessment(answers))
+
     def test_evaluate_decision_aggregates_scores_by_dimension(self):
         result = evaluate_decision(
             (

@@ -2,9 +2,22 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
+from assessment.methodology_config import (
+    BUSINESS_DECISION_METHODOLOGY,
+    BusinessDecisionMethodologyConfig,
+    QuestionConfig,
+    validate_methodology_config,
+)
+
 
 MIN_NORMALIZED_SCORE = 0.0
 MAX_NORMALIZED_SCORE = 100.0
+NUMERIC_EVALUATION_ANSWER_TYPES = frozenset(
+    {
+        "scale-0-4",
+        "numeric",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -13,6 +26,8 @@ class QuestionEvaluation:
     readiness_dimension: str
     normalized_score: float
     weight: float = 1.0
+    evidence_category: str = ""
+    weight_category: str = ""
 
 
 @dataclass(frozen=True)
@@ -47,6 +62,82 @@ def evaluate_decision(
     )
 
 
+def evaluate_assessment(
+    answers: Mapping[str, object],
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> DecisionEvaluationResult:
+    question_evaluations = build_question_evaluations(
+        answers,
+        methodology_config,
+    )
+    return evaluate_decision(question_evaluations)
+
+
+def build_question_evaluations(
+    answers: Mapping[str, object],
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> tuple[QuestionEvaluation, ...]:
+    validate_methodology_config(methodology_config)
+    _validate_answer_set(answers, methodology_config)
+
+    return tuple(
+        build_question_evaluation(
+            question_id,
+            answers[question_id],
+            methodology_config,
+        )
+        for question_id in sorted(methodology_config.questions)
+    )
+
+
+def load_question_definition(
+    question_id: str,
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> QuestionConfig:
+    try:
+        return methodology_config.questions[question_id]
+    except KeyError as exc:
+        raise ValueError(f"Unknown question ID: {question_id}") from exc
+
+
+def build_question_evaluation(
+    question_id: str,
+    answer: object,
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> QuestionEvaluation:
+    question = load_question_definition(question_id, methodology_config)
+    validate_answer(question, answer)
+
+    return QuestionEvaluation(
+        question_id=question.id,
+        readiness_dimension=question.readiness_dimension,
+        normalized_score=_evaluation_score(question, answer),
+        weight=methodology_config.placeholder_question_weights[question.id],
+        evidence_category=question.evidence_category,
+        weight_category=question.weight_category,
+    )
+
+
+def validate_answer(question: QuestionConfig, answer: object) -> None:
+    if question.expected_answer_type in NUMERIC_EVALUATION_ANSWER_TYPES:
+        if not _is_number(answer):
+            raise ValueError(f"Answer for {question.id} must be numeric.")
+        return
+
+    raise ValueError(
+        f"Question {question.id} answer type is not evaluable in this increment: "
+        f"{question.expected_answer_type}"
+    )
+
+
 def _aggregate_dimensions(
     evaluations: tuple[QuestionEvaluation, ...],
 ) -> dict[str, DimensionEvaluation]:
@@ -70,6 +161,29 @@ def _aggregate_dimensions(
         )
         for dimension_id, dimension_evaluations in sorted(by_dimension.items())
     }
+
+
+def _validate_answer_set(
+    answers: Mapping[str, object],
+    methodology_config: BusinessDecisionMethodologyConfig,
+) -> None:
+    unknown_question_ids = answers.keys() - methodology_config.questions.keys()
+    if unknown_question_ids:
+        raise ValueError(f"Unknown question ID: {sorted(unknown_question_ids)[0]}")
+
+    missing_question_ids = methodology_config.questions.keys() - answers.keys()
+    if missing_question_ids:
+        raise ValueError(f"Missing required question: {sorted(missing_question_ids)[0]}")
+
+
+def _evaluation_score(question: QuestionConfig, answer: object) -> float:
+    if question.expected_answer_type in NUMERIC_EVALUATION_ANSWER_TYPES:
+        return float(answer)
+
+    raise ValueError(
+        f"Question {question.id} answer type is not evaluable in this increment: "
+        f"{question.expected_answer_type}"
+    )
 
 
 def _weighted_average(
