@@ -23,6 +23,7 @@ from assessment.executive_runtime import (  # noqa: E402
     EXECUTIVE_VERSION_INCOMPATIBLE,
     NOT_PRODUCTION_AUTHORITATIVE,
     PRODUCTION_AUTHORITATIVE,
+    ExecutiveRuntime,
     ExecutiveRuntimeMetadata,
     ExecutiveRuntimeResult,
     create_executive_runtime_error_response,
@@ -92,6 +93,89 @@ def issue_codes(validation_result):
 
 
 class ExecutiveRuntimeFoundationTests(unittest.TestCase):
+    def test_executive_runtime_execute_returns_success_response(self):
+        package = valid_executive_package(scale_value=3, numeric_value=75)
+        runtime = ExecutiveRuntime()
+
+        result = runtime.execute(
+            package,
+            valid_runtime_metadata(),
+        )
+
+        self.assertTrue(result.is_success)
+        self.assertEqual(
+            result.to_dict()["businessDecisionPackage"],
+            package.to_dict(),
+        )
+
+    def test_executive_runtime_execute_is_equivalent_to_procedural_success(self):
+        package = valid_executive_package(scale_value=2, numeric_value=60)
+        metadata = valid_runtime_metadata()
+
+        class_result = ExecutiveRuntime().execute(
+            package,
+            metadata,
+            production_authoritative=True,
+        )
+        procedural_result = create_executive_runtime_success_response(
+            package,
+            metadata,
+            production_authoritative=True,
+        )
+
+        self.assertEqual(class_result, procedural_result)
+        self.assertEqual(class_result.to_dict(), procedural_result.to_dict())
+
+    def test_executive_runtime_execute_is_equivalent_to_procedural_error(self):
+        package = valid_executive_package()
+
+        class_result = ExecutiveRuntime().execute(
+            package,
+            None,
+        )
+        procedural_result = create_executive_runtime_success_response(
+            package,
+            None,
+        )
+
+        self.assertEqual(class_result, procedural_result)
+        self.assertEqual(class_result.to_dict(), procedural_result.to_dict())
+
+    def test_executive_runtime_is_immutable_and_stateless(self):
+        runtime = ExecutiveRuntime()
+
+        with self.assertRaises(FrozenInstanceError):
+            runtime.mutable_state = "not-allowed"
+
+        package = valid_executive_package(scale_value=3, numeric_value=80)
+        first = runtime.execute(
+            package,
+            ExecutiveRuntimeMetadata(
+                request_id="request-1",
+                correlation_id="correlation-1",
+            ),
+        )
+        second = runtime.execute(
+            package,
+            ExecutiveRuntimeMetadata(
+                request_id="request-2",
+                correlation_id="correlation-2",
+            ),
+        )
+
+        self.assertEqual(first.to_dict(), second.to_dict())
+
+    def test_executive_runtime_execute_does_not_mutate_inputs(self):
+        package = valid_executive_package(scale_value=1, numeric_value=40)
+        metadata = valid_runtime_metadata()
+        package_dict_before = package.to_dict()
+        metadata_before = replace(metadata)
+
+        ExecutiveRuntime().execute(package, metadata)
+
+        self.assertEqual(package.to_dict(), package_dict_before)
+        self.assertEqual(metadata, metadata_before)
+
     def test_successful_runtime_creation_returns_success_response(self):
         package = valid_executive_package(scale_value=3, numeric_value=75)
 

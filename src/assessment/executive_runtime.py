@@ -184,27 +184,54 @@ class ExecutiveRuntimeResult:
         return self.error.to_dict()
 
 
+@dataclass(frozen=True)
+class ExecutiveRuntime:
+    def execute(
+        self,
+        business_decision_package: object,
+        runtime_metadata: object,
+        *,
+        production_authoritative: bool = False,
+    ) -> ExecutiveRuntimeResult:
+        validation_result = validate_executive_runtime_input(
+            business_decision_package,
+            runtime_metadata,
+        )
+        if not validation_result.is_valid:
+            return create_executive_runtime_error_response(
+                _error_code_for_validation_issues(validation_result.issues),
+                validation_result.issues,
+            )
+
+        if not isinstance(business_decision_package, BusinessDecisionPackage):
+            return create_executive_runtime_error_response(
+                EXECUTIVE_PACKAGE_INTEGRITY_FAILED,
+            )
+
+        return _create_executive_runtime_success_result(
+            business_decision_package,
+            production_authoritative=production_authoritative,
+        )
+
+
 def create_executive_runtime_success_response(
     business_decision_package: object,
     runtime_metadata: object,
     *,
     production_authoritative: bool = False,
 ) -> ExecutiveRuntimeResult:
-    validation_result = validate_executive_runtime_input(
+    return ExecutiveRuntime().execute(
         business_decision_package,
         runtime_metadata,
+        production_authoritative=production_authoritative,
     )
-    if not validation_result.is_valid:
-        return create_executive_runtime_error_response(
-            _error_code_for_validation_issues(validation_result.issues),
-            validation_result.issues,
-        )
 
-    if not isinstance(business_decision_package, BusinessDecisionPackage):
-        return create_executive_runtime_error_response(
-            EXECUTIVE_PACKAGE_INTEGRITY_FAILED,
-        )
 
+def _create_executive_runtime_success_result(
+    business_decision_package: BusinessDecisionPackage,
+    *,
+    production_authoritative: bool,
+) -> ExecutiveRuntimeResult:
     response_status = ExecutiveRuntimeResponseStatus(
         package_validation=PACKAGE_VALIDATION_VALIDATED,
         runtime_eligibility=RUNTIME_ELIGIBILITY_ELIGIBLE,
