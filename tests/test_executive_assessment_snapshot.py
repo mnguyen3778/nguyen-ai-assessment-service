@@ -17,6 +17,7 @@ from assessment.executive_assessment_snapshot import (  # noqa: E402
     ExecutiveAssessmentSnapshot,
     create_executive_assessment_snapshot,
     validate_executive_assessment_snapshot,
+    validate_executive_assessment_snapshot_serialization,
 )
 from assessment.executive_runtime import (  # noqa: E402
     EXECUTIVE_ASSESSMENT_VERSION,
@@ -577,6 +578,259 @@ class ExecutiveAssessmentSnapshotTests(unittest.TestCase):
             snapshot.response_contract_version,
             EXECUTIVE_RUNTIME_RESPONSE_CONTRACT_VERSION,
         )
+
+    def test_snapshot_serialization_is_deterministic(self):
+        package = valid_executive_package(scale_value=3, numeric_value=80)
+        first = ExecutiveAssessmentSnapshot(
+            successful_runtime_result(
+                package,
+                runtime_metadata(
+                    request_id="request-1",
+                    correlation_id="correlation-1",
+                    trace_id="trace-1",
+                ),
+            )
+        )
+        second = ExecutiveAssessmentSnapshot(
+            successful_runtime_result(
+                package,
+                runtime_metadata(
+                    request_id="request-2",
+                    correlation_id="correlation-2",
+                    trace_id="trace-2",
+                ),
+            )
+        )
+
+        self.assertEqual(first.to_dict(), second.to_dict())
+
+    def test_snapshot_serialization_preserves_runtime_success_field_order(self):
+        snapshot = ExecutiveAssessmentSnapshot(successful_runtime_result())
+        serialized_snapshot = snapshot.to_dict()
+
+        self.assertEqual(
+            tuple(serialized_snapshot),
+            (
+                "responseContractVersion",
+                "responseStatus",
+                "businessDecisionPackage",
+            ),
+        )
+        self.assertEqual(
+            tuple(serialized_snapshot["responseStatus"]),
+            (
+                "packageValidation",
+                "runtimeEligibility",
+                "exposure",
+                "productionAuthority",
+            ),
+        )
+
+    def test_snapshot_serialization_reuses_existing_component_serialization(self):
+        result = successful_runtime_result()
+        snapshot = ExecutiveAssessmentSnapshot(result)
+
+        serialized_snapshot = snapshot.to_dict()
+
+        self.assertEqual(
+            serialized_snapshot["responseStatus"],
+            result.success.response_status.to_dict(),
+        )
+        self.assertEqual(
+            serialized_snapshot["businessDecisionPackage"],
+            result.success.business_decision_package.to_dict(),
+        )
+
+    def test_serialized_snapshot_validation_accepts_valid_serialization(self):
+        snapshot = ExecutiveAssessmentSnapshot(successful_runtime_result())
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            snapshot.to_dict()
+        )
+
+        self.assertTrue(validation_result.is_valid)
+        self.assertEqual(validation_result.issues, ())
+
+    def test_snapshot_to_dict_followed_by_serialized_validation_succeeds(self):
+        snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result(production_authoritative=True)
+        )
+        serialized_snapshot = snapshot.to_dict()
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertTrue(validation_result.is_valid)
+        self.assertEqual(
+            serialized_snapshot["responseStatus"]["productionAuthority"],
+            PRODUCTION_AUTHORITATIVE,
+        )
+
+    def test_serialized_snapshot_validation_rejects_malformed_payload(self):
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            []
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertEqual(
+            issue_codes(validation_result),
+            ("invalid-snapshot-serialization-type",),
+        )
+
+    def test_serialized_snapshot_validation_rejects_missing_required_fields(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot.pop("responseStatus")
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "snapshot-serialization-field-order-mismatch",
+            issue_codes(validation_result),
+        )
+        self.assertIn(
+            "missing-serialized-snapshot-field",
+            issue_codes(validation_result),
+        )
+        self.assertIn("invalid-response-status", issue_codes(validation_result))
+
+    def test_serialized_snapshot_validation_rejects_unexpected_fields(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["generatedAt"] = "2026-07-29T00:00:00Z"
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "snapshot-serialization-field-order-mismatch",
+            issue_codes(validation_result),
+        )
+        self.assertIn(
+            "unexpected-serialized-snapshot-field",
+            issue_codes(validation_result),
+        )
+
+    def test_serialized_snapshot_validation_rejects_invalid_versions(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["responseContractVersion"] = (
+            "unsupported-response-contract"
+        )
+        serialized_snapshot["businessDecisionPackage"]["versionMetadata"][
+            "contractVersion"
+        ] = "business-decision-package-v2"
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "invalid-response-contract-version",
+            issue_codes(validation_result),
+        )
+        self.assertIn(
+            "package-serialized-contract-version-mismatch",
+            issue_codes(validation_result),
+        )
+
+    def test_serialized_snapshot_validation_rejects_invalid_response_status(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["responseStatus"]["packageValidation"] = "PENDING"
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn("invalid-response-status", issue_codes(validation_result))
+
+    def test_serialized_snapshot_validation_rejects_invalid_response_status_shape(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["responseStatus"]["runtimeGenerated"] = True
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "response-status-field-order-mismatch",
+            issue_codes(validation_result),
+        )
+        self.assertIn(
+            "unexpected-response-status-field",
+            issue_codes(validation_result),
+        )
+
+    def test_serialized_snapshot_validation_rejects_invalid_package_serialization(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["businessDecisionPackage"]["limitations"] = []
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "package-serialized-limitations-mismatch",
+            issue_codes(validation_result),
+        )
+
+    def test_serialized_snapshot_validation_delegates_package_validation(self):
+        serialized_snapshot = ExecutiveAssessmentSnapshot(
+            successful_runtime_result()
+        ).to_dict()
+        serialized_snapshot["businessDecisionPackage"] = "not-a-package"
+
+        validation_result = validate_executive_assessment_snapshot_serialization(
+            serialized_snapshot
+        )
+
+        self.assertFalse(validation_result.is_valid)
+        self.assertIn(
+            "package-invalid-serialization-type",
+            issue_codes(validation_result),
+        )
+
+    def test_snapshot_serialization_does_not_mutate_snapshot(self):
+        snapshot = ExecutiveAssessmentSnapshot(successful_runtime_result())
+        snapshot_state_before = dict(snapshot.__dict__)
+
+        serialized_snapshot = snapshot.to_dict()
+        serialized_snapshot["responseContractVersion"] = "mutated"
+
+        self.assertEqual(snapshot.__dict__, snapshot_state_before)
+        self.assertEqual(
+            snapshot.response_contract_version,
+            EXECUTIVE_RUNTIME_RESPONSE_CONTRACT_VERSION,
+        )
+
+    def test_snapshot_serialization_does_not_mutate_business_decision_package(self):
+        package = valid_executive_package(scale_value=2, numeric_value=50)
+        package_state_before = package.to_dict()
+        snapshot = ExecutiveAssessmentSnapshot(successful_runtime_result(package))
+
+        serialized_snapshot = snapshot.to_dict()
+        serialized_snapshot["businessDecisionPackage"]["limitations"] = []
+
+        self.assertEqual(package.to_dict(), package_state_before)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from assessment.business_decision_package import (
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
@@ -7,6 +8,7 @@ from assessment.business_decision_package import (
 )
 from assessment.business_decision_package_validation import (
     validate_business_decision_package,
+    validate_business_decision_package_serialization,
 )
 from assessment.executive_runtime import (
     EXECUTIVE_ASSESSMENT_VERSION,
@@ -28,6 +30,17 @@ _SNAPSHOT_FIELDS = (
     "business_decision_package",
     "response_status",
     "response_contract_version",
+)
+_SERIALIZED_SNAPSHOT_FIELD_ORDER = (
+    "responseContractVersion",
+    "responseStatus",
+    "businessDecisionPackage",
+)
+_SERIALIZED_RESPONSE_STATUS_FIELD_ORDER = (
+    "packageValidation",
+    "runtimeEligibility",
+    "exposure",
+    "productionAuthority",
 )
 _RUNTIME_METADATA_FIELDS = {
     "runtime_metadata",
@@ -94,6 +107,13 @@ class ExecutiveAssessmentSnapshot:
                 f"{issue_codes}."
             )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "responseContractVersion": self.response_contract_version,
+            "responseStatus": self.response_status.to_dict(),
+            "businessDecisionPackage": self.business_decision_package.to_dict(),
+        }
+
 
 def create_executive_assessment_snapshot(
     executive_runtime_result: object,
@@ -120,6 +140,32 @@ def validate_executive_assessment_snapshot(
     _validate_snapshot_package(snapshot, issues)
     _validate_snapshot_response_status(snapshot, issues)
     _validate_snapshot_response_contract_version(snapshot, issues)
+
+    return _result(issues)
+
+
+def validate_executive_assessment_snapshot_serialization(
+    serialized_snapshot: object,
+) -> ExecutiveRuntimeValidationResult:
+    issues: list[ExecutiveRuntimeValidationIssue] = []
+
+    if not isinstance(serialized_snapshot, Mapping):
+        issues.append(
+            _issue(
+                "invalid-snapshot-serialization-type",
+                "$",
+                "Serialized snapshot must be a mapping.",
+            )
+        )
+        return _result(issues)
+
+    _validate_serialized_snapshot_root(serialized_snapshot, issues)
+    _validate_serialized_snapshot_response_contract_version(
+        serialized_snapshot,
+        issues,
+    )
+    _validate_serialized_snapshot_response_status(serialized_snapshot, issues)
+    _validate_serialized_snapshot_package(serialized_snapshot, issues)
 
     return _result(issues)
 
@@ -325,6 +371,138 @@ def _validate_snapshot_response_contract_version(
                 "invalid-response-contract-version",
                 "$.response_contract_version",
                 "Snapshot response contract version is not supported.",
+            )
+        )
+
+
+def _validate_serialized_snapshot_root(
+    serialized_snapshot: Mapping[str, Any],
+    issues: list[ExecutiveRuntimeValidationIssue],
+) -> None:
+    observed_fields = tuple(serialized_snapshot)
+    if observed_fields != _SERIALIZED_SNAPSHOT_FIELD_ORDER:
+        issues.append(
+            _issue(
+                "snapshot-serialization-field-order-mismatch",
+                "$",
+                "Serialized snapshot root fields do not match contract order.",
+            )
+        )
+
+    observed_field_set = set(serialized_snapshot)
+    expected_field_set = set(_SERIALIZED_SNAPSHOT_FIELD_ORDER)
+    for field_name in sorted(expected_field_set - observed_field_set):
+        issues.append(
+            _issue(
+                "missing-serialized-snapshot-field",
+                f"$.{field_name}",
+                f"Serialized snapshot is missing required field: {field_name}.",
+            )
+        )
+    for field_name in sorted(observed_field_set - expected_field_set):
+        issues.append(
+            _issue(
+                "unexpected-serialized-snapshot-field",
+                f"$.{field_name}",
+                f"Serialized snapshot contains unexpected field: {field_name}.",
+            )
+        )
+
+
+def _validate_serialized_snapshot_response_contract_version(
+    serialized_snapshot: Mapping[str, Any],
+    issues: list[ExecutiveRuntimeValidationIssue],
+) -> None:
+    if (
+        serialized_snapshot.get("responseContractVersion")
+        != EXECUTIVE_RUNTIME_RESPONSE_CONTRACT_VERSION
+    ):
+        issues.append(
+            _issue(
+                "invalid-response-contract-version",
+                "$.responseContractVersion",
+                "Serialized snapshot response contract version is not supported.",
+            )
+        )
+
+
+def _validate_serialized_snapshot_response_status(
+    serialized_snapshot: Mapping[str, Any],
+    issues: list[ExecutiveRuntimeValidationIssue],
+) -> None:
+    response_status = serialized_snapshot.get("responseStatus")
+    if not isinstance(response_status, Mapping):
+        issues.append(
+            _issue(
+                "invalid-response-status",
+                "$.responseStatus",
+                "Serialized snapshot response status must be a mapping.",
+            )
+        )
+        return
+
+    observed_fields = tuple(response_status)
+    if observed_fields != _SERIALIZED_RESPONSE_STATUS_FIELD_ORDER:
+        issues.append(
+            _issue(
+                "response-status-field-order-mismatch",
+                "$.responseStatus",
+                "Serialized response status fields do not match contract order.",
+            )
+        )
+
+    observed_field_set = set(response_status)
+    expected_field_set = set(_SERIALIZED_RESPONSE_STATUS_FIELD_ORDER)
+    for field_name in sorted(expected_field_set - observed_field_set):
+        issues.append(
+            _issue(
+                "missing-response-status-field",
+                f"$.responseStatus.{field_name}",
+                f"Serialized response status is missing required field: {field_name}.",
+            )
+        )
+    for field_name in sorted(observed_field_set - expected_field_set):
+        issues.append(
+            _issue(
+                "unexpected-response-status-field",
+                f"$.responseStatus.{field_name}",
+                f"Serialized response status contains unexpected field: {field_name}.",
+            )
+        )
+
+    expected_status = {
+        "packageValidation": {PACKAGE_VALIDATION_VALIDATED},
+        "runtimeEligibility": {RUNTIME_ELIGIBILITY_ELIGIBLE},
+        "exposure": {EXPOSURE_ELIGIBLE},
+        "productionAuthority": {
+            PRODUCTION_AUTHORITATIVE,
+            NOT_PRODUCTION_AUTHORITATIVE,
+        },
+    }
+    for field_name, allowed_values in expected_status.items():
+        if response_status.get(field_name) not in allowed_values:
+            issues.append(
+                _issue(
+                    "invalid-response-status",
+                    f"$.responseStatus.{field_name}",
+                    "Serialized response status contains an unsupported value.",
+                )
+            )
+
+
+def _validate_serialized_snapshot_package(
+    serialized_snapshot: Mapping[str, Any],
+    issues: list[ExecutiveRuntimeValidationIssue],
+) -> None:
+    package_validation = validate_business_decision_package_serialization(
+        serialized_snapshot.get("businessDecisionPackage")
+    )
+    for package_issue in package_validation.issues:
+        issues.append(
+            _issue(
+                f"package-{package_issue.code}",
+                f"$.businessDecisionPackage{package_issue.path[1:]}",
+                "Serialized snapshot BusinessDecisionPackage validation failed.",
             )
         )
 
