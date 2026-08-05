@@ -3,10 +3,12 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import assessment.decision_engine as decision_engine_module  # noqa: E402
 from assessment.decision_engine import (  # noqa: E402
     QuestionEvaluation,
     build_question_evaluations,
@@ -28,6 +30,33 @@ def valid_configured_answers(scale_value=4, numeric_value=100):
 
 
 class DecisionEngineTests(unittest.TestCase):
+    def test_build_question_evaluations_invokes_approved_scoring_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "score_approved_questions",
+            wraps=decision_engine_module.score_approved_questions,
+        ) as scoring_mock:
+            evaluations = build_question_evaluations(answers)
+
+        scoring_mock.assert_called_once_with(
+            answers,
+            BUSINESS_DECISION_METHODOLOGY.version,
+        )
+        evaluation_by_id = {
+            evaluation.question_id: evaluation
+            for evaluation in evaluations
+        }
+        self.assertEqual(
+            evaluation_by_id["q.ai.governance.owner"].normalized_score,
+            50,
+        )
+        self.assertEqual(
+            evaluation_by_id["q.automation.manual-volume"].normalized_score,
+            37,
+        )
+
     def test_evaluate_assessment_maps_answers_through_methodology_config(self):
         result = evaluate_assessment(valid_configured_answers())
 
@@ -151,28 +180,28 @@ class DecisionEngineTests(unittest.TestCase):
         answers = valid_configured_answers()
         answers["q.unknown"] = 100
 
-        with self.assertRaisesRegex(ValueError, "Unknown question ID"):
+        with self.assertRaisesRegex(ValueError, "Unknown question response"):
             evaluate_assessment(answers)
 
     def test_evaluate_assessment_rejects_missing_required_question(self):
         answers = valid_configured_answers()
         del answers["q.ai.governance.owner"]
 
-        with self.assertRaisesRegex(ValueError, "Missing required question"):
+        with self.assertRaisesRegex(ValueError, "Missing question response"):
             evaluate_assessment(answers)
 
     def test_evaluate_assessment_rejects_invalid_answer_type(self):
         answers = valid_configured_answers()
         answers["q.ai.governance.owner"] = "ready"
 
-        with self.assertRaisesRegex(ValueError, "must be numeric"):
+        with self.assertRaisesRegex(ValueError, "Malformed response"):
             evaluate_assessment(answers)
 
     def test_evaluate_assessment_rejects_out_of_range_answer(self):
         answers = valid_configured_answers()
         answers["q.ai.governance.owner"] = 5
 
-        with self.assertRaisesRegex(ValueError, "between 0 and 4"):
+        with self.assertRaisesRegex(ValueError, "Out-of-range response"):
             evaluate_assessment(answers)
 
     def test_evaluate_assessment_rejects_invalid_configured_weight(self):

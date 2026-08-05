@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
+from assessment.approved_question_scoring_runtime import (
+    ApprovedQuestionScore,
+    score_approved_questions,
+)
 from assessment.methodology_config import (
     AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
@@ -107,15 +111,42 @@ def build_question_evaluations(
     ),
 ) -> tuple[QuestionEvaluation, ...]:
     validate_methodology_config(methodology_config)
-    _validate_answer_set(answers, methodology_config)
+    approved_scoring = score_approved_questions(
+        answers,
+        methodology_config.version,
+    )
+    approved_scores = {
+        question_score.question_id: question_score
+        for question_score in approved_scoring.question_scores
+    }
 
     return tuple(
-        build_question_evaluation(
+        _build_question_evaluation_from_approved_score(
             question_id,
-            answers[question_id],
+            approved_scores[question_id],
             methodology_config,
         )
         for question_id in sorted(methodology_config.questions)
+    )
+
+
+def _build_question_evaluation_from_approved_score(
+    question_id: str,
+    approved_score: ApprovedQuestionScore,
+    methodology_config: BusinessDecisionMethodologyConfig,
+) -> QuestionEvaluation:
+    question = load_question_definition(question_id, methodology_config)
+
+    if approved_score.question_id != question.id:
+        raise ValueError(f"Approved question score mismatch: {question_id}")
+
+    return QuestionEvaluation(
+        question_id=question.id,
+        readiness_dimension=question.readiness_dimension,
+        normalized_score=approved_score.score,
+        weight=methodology_config.placeholder_question_weights[question.id],
+        evidence_category=question.evidence_category,
+        weight_category=question.weight_category,
     )
 
 
