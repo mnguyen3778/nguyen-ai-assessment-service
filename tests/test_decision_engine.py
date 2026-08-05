@@ -9,6 +9,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import assessment.decision_engine as decision_engine_module  # noqa: E402
+from assessment.approved_question_scoring_runtime import (  # noqa: E402
+    ApprovedQuestionScoringResult,
+)
 from assessment.decision_engine import (  # noqa: E402
     QuestionEvaluation,
     build_question_evaluations,
@@ -30,6 +33,31 @@ def valid_configured_answers(scale_value=4, numeric_value=100):
 
 
 class DecisionEngineTests(unittest.TestCase):
+    def test_evaluate_assessment_invokes_approved_dimension_aggregation_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "aggregate_approved_dimensions",
+            wraps=decision_engine_module.aggregate_approved_dimensions,
+        ) as aggregation_mock:
+            result = evaluate_assessment(answers)
+
+        aggregation_mock.assert_called_once()
+        aggregation_input = aggregation_mock.call_args.args[0]
+        self.assertIsInstance(aggregation_input, ApprovedQuestionScoringResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.729166666666664)
+
+    def test_evaluate_assessment_fails_closed_when_dimension_aggregation_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "aggregate_approved_dimensions",
+            side_effect=ValueError("approved dimension aggregation failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "dimension aggregation failed"):
+                evaluate_assessment(valid_configured_answers())
+
     def test_build_question_evaluations_invokes_approved_scoring_runtime(self):
         answers = valid_configured_answers(scale_value=2, numeric_value=37)
 

@@ -2,8 +2,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
+from assessment.approved_dimension_aggregation_runtime import (
+    ApprovedDimensionAggregationResult,
+    aggregate_approved_dimensions,
+)
 from assessment.approved_question_scoring_runtime import (
     ApprovedQuestionScore,
+    ApprovedQuestionScoringResult,
     score_approved_questions,
 )
 from assessment.methodology_config import (
@@ -97,9 +102,21 @@ def evaluate_assessment(
         BUSINESS_DECISION_METHODOLOGY
     ),
 ) -> DecisionEvaluationResult:
-    question_evaluations = build_question_evaluations(
+    validate_methodology_config(methodology_config)
+    approved_scoring = score_approved_questions(
         answers,
+        methodology_config.version,
+    )
+    approved_dimension_aggregation = aggregate_approved_dimensions(
+        approved_scoring,
+    )
+    question_evaluations = _build_question_evaluations_from_approved_scoring(
+        approved_scoring,
         methodology_config,
+    )
+    _validate_approved_dimension_aggregation_alignment(
+        approved_dimension_aggregation,
+        question_evaluations,
     )
     return evaluate_decision(question_evaluations)
 
@@ -115,6 +132,16 @@ def build_question_evaluations(
         answers,
         methodology_config.version,
     )
+    return _build_question_evaluations_from_approved_scoring(
+        approved_scoring,
+        methodology_config,
+    )
+
+
+def _build_question_evaluations_from_approved_scoring(
+    approved_scoring: ApprovedQuestionScoringResult,
+    methodology_config: BusinessDecisionMethodologyConfig,
+) -> tuple[QuestionEvaluation, ...]:
     approved_scores = {
         question_score.question_id: question_score
         for question_score in approved_scoring.question_scores
@@ -128,6 +155,24 @@ def build_question_evaluations(
         )
         for question_id in sorted(methodology_config.questions)
     )
+
+
+def _validate_approved_dimension_aggregation_alignment(
+    approved_dimension_aggregation: ApprovedDimensionAggregationResult,
+    question_evaluations: tuple[QuestionEvaluation, ...],
+) -> None:
+    question_scores = {
+        evaluation.question_id: evaluation.normalized_score
+        for evaluation in question_evaluations
+    }
+    aggregated_question_scores = {
+        question_id: score
+        for dimension in approved_dimension_aggregation.dimensions
+        for question_id, score in dimension.contributing_scores.items()
+    }
+
+    if aggregated_question_scores != question_scores:
+        raise ValueError("Approved dimension aggregation does not match question scores.")
 
 
 def _build_question_evaluation_from_approved_score(
