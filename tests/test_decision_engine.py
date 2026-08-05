@@ -24,6 +24,9 @@ from assessment.approved_overall_assessment_runtime import (  # noqa: E402
 from assessment.approved_readiness_runtime import (  # noqa: E402
     ApprovedReadinessAssessmentResult,
 )
+from assessment.approved_severity_runtime import (  # noqa: E402
+    ApprovedSeverityAssessmentResult,
+)
 from assessment.decision_engine import (  # noqa: E402
     QuestionEvaluation,
     build_question_evaluations,
@@ -168,6 +171,70 @@ class DecisionEngineTests(unittest.TestCase):
             side_effect=ValueError("approved severity failed"),
         ):
             with self.assertRaisesRegex(ValueError, "severity failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_risk_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_risk",
+            wraps=decision_engine_module.determine_approved_risk,
+        ) as risk_mock:
+            result = evaluate_assessment(answers)
+
+        risk_mock.assert_called_once()
+        risk_input = risk_mock.call_args.args[0]
+        self.assertIsInstance(risk_input, ApprovedSeverityAssessmentResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_risk_runtime_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_risk",
+            side_effect=ValueError("approved risk failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "risk failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_risk_mismatches_severity(self):
+        original_risk_runtime = decision_engine_module.determine_approved_risk
+
+        def mismatched_risk(severity):
+            risk = original_risk_runtime(severity)
+            return replace(
+                risk,
+                severity_classifications=("critical",),
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_risk",
+            side_effect=mismatched_risk,
+        ):
+            with self.assertRaisesRegex(ValueError, "risk does not match severity"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_risk_mismatches_table(self):
+        original_risk_runtime = decision_engine_module.determine_approved_risk
+
+        def mismatched_risk(severity):
+            risk = original_risk_runtime(severity)
+            return replace(
+                risk,
+                risk_classification="critical-risk",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_risk",
+            side_effect=mismatched_risk,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "risk classification does not match",
+            ):
                 evaluate_assessment(valid_configured_answers())
 
     def test_build_question_evaluations_invokes_approved_scoring_runtime(self):

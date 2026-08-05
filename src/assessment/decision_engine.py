@@ -10,6 +10,9 @@ from assessment.approved_dimension_weighting_runtime import (
     ApprovedDimensionWeightingResult,
     weight_approved_dimensions,
 )
+from assessment.approved_methodology_runtime_config import (
+    APPROVED_METHODOLOGY_RUNTIME_CONFIG,
+)
 from assessment.approved_overall_assessment_runtime import (
     ApprovedOverallAssessmentResult,
     calculate_approved_overall_assessment,
@@ -22,6 +25,10 @@ from assessment.approved_question_scoring_runtime import (
 from assessment.approved_readiness_runtime import (
     ApprovedReadinessAssessmentResult,
     determine_approved_readiness,
+)
+from assessment.approved_risk_runtime import (
+    ApprovedRiskAssessmentResult,
+    determine_approved_risk,
 )
 from assessment.approved_severity_runtime import (
     ApprovedSeverityAssessmentResult,
@@ -139,6 +146,9 @@ def evaluate_assessment(
     approved_severity = determine_approved_severity(
         approved_readiness,
     )
+    approved_risk = determine_approved_risk(
+        approved_severity,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -162,6 +172,10 @@ def evaluate_assessment(
     _validate_approved_severity_alignment(
         approved_severity,
         approved_readiness,
+    )
+    _validate_approved_risk_alignment(
+        approved_risk,
+        approved_severity,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -326,6 +340,42 @@ def _validate_approved_severity_alignment(
         raise ValueError(
             "Approved severity decision does not match readiness threshold."
         )
+
+
+def _validate_approved_risk_alignment(
+    approved_risk: ApprovedRiskAssessmentResult,
+    approved_severity: ApprovedSeverityAssessmentResult,
+) -> None:
+    try:
+        expected_risk_rule = (
+            APPROVED_METHODOLOGY_RUNTIME_CONFIG.risk_decision_rules[
+                approved_risk.risk_decision_identifier
+            ]
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "Approved risk decision does not match approved risk decision tables."
+        ) from exc
+
+    if (
+        approved_risk.risk_decision_table_version
+        != expected_risk_rule.table_version
+        or approved_risk.risk_classification != expected_risk_rule.output
+    ):
+        raise ValueError(
+            "Approved risk classification does not match approved risk decision table."
+        )
+    if approved_risk.severity_classifications != (
+        approved_severity.severity_classification,
+    ):
+        raise ValueError("Approved risk does not match severity result.")
+    if (
+        approved_risk.readiness_classification
+        != approved_severity.readiness_classification
+        or approved_risk.overall_assessment_score
+        != approved_severity.readiness_score
+    ):
+        raise ValueError("Approved risk does not match severity context.")
 
 
 def _build_question_evaluation_from_approved_score(
