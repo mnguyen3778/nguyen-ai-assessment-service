@@ -6,6 +6,10 @@ from assessment.approved_dimension_aggregation_runtime import (
     ApprovedDimensionAggregationResult,
     aggregate_approved_dimensions,
 )
+from assessment.approved_dimension_weighting_runtime import (
+    ApprovedDimensionWeightingResult,
+    weight_approved_dimensions,
+)
 from assessment.approved_question_scoring_runtime import (
     ApprovedQuestionScore,
     ApprovedQuestionScoringResult,
@@ -110,6 +114,9 @@ def evaluate_assessment(
     approved_dimension_aggregation = aggregate_approved_dimensions(
         approved_scoring,
     )
+    approved_dimension_weighting = weight_approved_dimensions(
+        approved_dimension_aggregation,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -117,6 +124,10 @@ def evaluate_assessment(
     _validate_approved_dimension_aggregation_alignment(
         approved_dimension_aggregation,
         question_evaluations,
+    )
+    _validate_approved_dimension_weighting_alignment(
+        approved_dimension_weighting,
+        approved_dimension_aggregation,
     )
     return evaluate_decision(question_evaluations)
 
@@ -173,6 +184,25 @@ def _validate_approved_dimension_aggregation_alignment(
 
     if aggregated_question_scores != question_scores:
         raise ValueError("Approved dimension aggregation does not match question scores.")
+
+
+def _validate_approved_dimension_weighting_alignment(
+    approved_dimension_weighting: ApprovedDimensionWeightingResult,
+    approved_dimension_aggregation: ApprovedDimensionAggregationResult,
+) -> None:
+    aggregated_scores = {
+        dimension.dimension_id: dimension.score
+        for dimension in approved_dimension_aggregation.dimensions
+    }
+    weighted_raw_scores = {
+        dimension.dimension_id: dimension.raw_aggregated_score
+        for dimension in approved_dimension_weighting.dimensions
+    }
+
+    if weighted_raw_scores != aggregated_scores:
+        raise ValueError(
+            "Approved dimension weighting does not match dimension aggregation."
+        )
 
 
 def _build_question_evaluation_from_approved_score(

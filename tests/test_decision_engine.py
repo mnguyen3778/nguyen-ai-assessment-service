@@ -9,6 +9,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import assessment.decision_engine as decision_engine_module  # noqa: E402
+from assessment.approved_dimension_aggregation_runtime import (  # noqa: E402
+    ApprovedDimensionAggregationResult,
+)
 from assessment.approved_question_scoring_runtime import (  # noqa: E402
     ApprovedQuestionScoringResult,
 )
@@ -56,6 +59,31 @@ class DecisionEngineTests(unittest.TestCase):
             side_effect=ValueError("approved dimension aggregation failed"),
         ):
             with self.assertRaisesRegex(ValueError, "dimension aggregation failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_dimension_weighting_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "weight_approved_dimensions",
+            wraps=decision_engine_module.weight_approved_dimensions,
+        ) as weighting_mock:
+            result = evaluate_assessment(answers)
+
+        weighting_mock.assert_called_once()
+        weighting_input = weighting_mock.call_args.args[0]
+        self.assertIsInstance(weighting_input, ApprovedDimensionAggregationResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.729166666666664)
+
+    def test_evaluate_assessment_fails_closed_when_dimension_weighting_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "weight_approved_dimensions",
+            side_effect=ValueError("approved dimension weighting failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "dimension weighting failed"):
                 evaluate_assessment(valid_configured_answers())
 
     def test_build_question_evaluations_invokes_approved_scoring_runtime(self):
