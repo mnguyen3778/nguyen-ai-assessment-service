@@ -24,6 +24,9 @@ from assessment.approved_overall_assessment_runtime import (  # noqa: E402
 from assessment.approved_readiness_runtime import (  # noqa: E402
     ApprovedReadinessAssessmentResult,
 )
+from assessment.approved_risk_runtime import (  # noqa: E402
+    ApprovedRiskAssessmentResult,
+)
 from assessment.approved_severity_runtime import (  # noqa: E402
     ApprovedSeverityAssessmentResult,
 )
@@ -233,7 +236,75 @@ class DecisionEngineTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 ValueError,
-                "risk classification does not match",
+                "Risk classification does not match",
+            ):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_confidence_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_confidence",
+            wraps=decision_engine_module.determine_approved_confidence,
+        ) as confidence_mock:
+            result = evaluate_assessment(answers)
+
+        confidence_mock.assert_called_once()
+        confidence_input = confidence_mock.call_args.args[0]
+        self.assertIsInstance(confidence_input, ApprovedRiskAssessmentResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_confidence_runtime_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_confidence",
+            side_effect=ValueError("approved confidence failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "confidence failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_confidence_mismatches_risk(self):
+        original_confidence_runtime = (
+            decision_engine_module.determine_approved_confidence
+        )
+
+        def mismatched_confidence(risk):
+            confidence = original_confidence_runtime(risk)
+            return replace(
+                confidence,
+                risk_classification="critical-risk",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_confidence",
+            side_effect=mismatched_confidence,
+        ):
+            with self.assertRaisesRegex(ValueError, "confidence does not match risk"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_confidence_mismatches_table(self):
+        original_confidence_runtime = (
+            decision_engine_module.determine_approved_confidence
+        )
+
+        def mismatched_confidence(risk):
+            confidence = original_confidence_runtime(risk)
+            return replace(
+                confidence,
+                confidence_classification="very-high-confidence",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_confidence",
+            side_effect=mismatched_confidence,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "confidence classification does not match",
             ):
                 evaluate_assessment(valid_configured_answers())
 

@@ -10,6 +10,10 @@ from assessment.approved_dimension_weighting_runtime import (
     ApprovedDimensionWeightingResult,
     weight_approved_dimensions,
 )
+from assessment.approved_confidence_runtime import (
+    ApprovedConfidenceAssessmentResult,
+    determine_approved_confidence,
+)
 from assessment.approved_methodology_runtime_config import (
     APPROVED_METHODOLOGY_RUNTIME_CONFIG,
 )
@@ -149,6 +153,9 @@ def evaluate_assessment(
     approved_risk = determine_approved_risk(
         approved_severity,
     )
+    approved_confidence = determine_approved_confidence(
+        approved_risk,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -176,6 +183,10 @@ def evaluate_assessment(
     _validate_approved_risk_alignment(
         approved_risk,
         approved_severity,
+    )
+    _validate_approved_confidence_alignment(
+        approved_confidence,
+        approved_risk,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -376,6 +387,45 @@ def _validate_approved_risk_alignment(
         != approved_severity.readiness_score
     ):
         raise ValueError("Approved risk does not match severity context.")
+
+
+def _validate_approved_confidence_alignment(
+    approved_confidence: ApprovedConfidenceAssessmentResult,
+    approved_risk: ApprovedRiskAssessmentResult,
+) -> None:
+    try:
+        expected_confidence_rule = (
+            APPROVED_METHODOLOGY_RUNTIME_CONFIG.confidence_decision_rules[
+                approved_confidence.confidence_decision_identifier
+            ]
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "Approved confidence decision does not match approved confidence "
+            "decision tables."
+        ) from exc
+
+    if (
+        approved_confidence.confidence_decision_table_version
+        != expected_confidence_rule.table_version
+        or approved_confidence.confidence_classification
+        != expected_confidence_rule.output
+    ):
+        raise ValueError(
+            "Approved confidence classification does not match approved "
+            "confidence decision table."
+        )
+    if (
+        approved_confidence.risk_classification
+        != approved_risk.risk_classification
+        or approved_confidence.severity_classifications
+        != approved_risk.severity_classifications
+        or approved_confidence.readiness_classification
+        != approved_risk.readiness_classification
+        or approved_confidence.overall_assessment_score
+        != approved_risk.overall_assessment_score
+    ):
+        raise ValueError("Approved confidence does not match risk result.")
 
 
 def _build_question_evaluation_from_approved_score(
