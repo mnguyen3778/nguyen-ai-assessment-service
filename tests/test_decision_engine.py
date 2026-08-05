@@ -12,6 +12,9 @@ import assessment.decision_engine as decision_engine_module  # noqa: E402
 from assessment.approved_dimension_aggregation_runtime import (  # noqa: E402
     ApprovedDimensionAggregationResult,
 )
+from assessment.approved_dimension_weighting_runtime import (  # noqa: E402
+    ApprovedDimensionWeightingResult,
+)
 from assessment.approved_question_scoring_runtime import (  # noqa: E402
     ApprovedQuestionScoringResult,
 )
@@ -50,7 +53,7 @@ class DecisionEngineTests(unittest.TestCase):
         aggregation_input = aggregation_mock.call_args.args[0]
         self.assertIsInstance(aggregation_input, ApprovedQuestionScoringResult)
         self.assertEqual(result.question_count, 48)
-        self.assertAlmostEqual(result.overall_score, 49.729166666666664)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
 
     def test_evaluate_assessment_fails_closed_when_dimension_aggregation_fails(self):
         with patch.object(
@@ -75,7 +78,7 @@ class DecisionEngineTests(unittest.TestCase):
         weighting_input = weighting_mock.call_args.args[0]
         self.assertIsInstance(weighting_input, ApprovedDimensionAggregationResult)
         self.assertEqual(result.question_count, 48)
-        self.assertAlmostEqual(result.overall_score, 49.729166666666664)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
 
     def test_evaluate_assessment_fails_closed_when_dimension_weighting_fails(self):
         with patch.object(
@@ -84,6 +87,31 @@ class DecisionEngineTests(unittest.TestCase):
             side_effect=ValueError("approved dimension weighting failed"),
         ):
             with self.assertRaisesRegex(ValueError, "dimension weighting failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_overall_assessment_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "calculate_approved_overall_assessment",
+            wraps=decision_engine_module.calculate_approved_overall_assessment,
+        ) as overall_mock:
+            result = evaluate_assessment(answers)
+
+        overall_mock.assert_called_once()
+        overall_input = overall_mock.call_args.args[0]
+        self.assertIsInstance(overall_input, ApprovedDimensionWeightingResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_overall_assessment_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "calculate_approved_overall_assessment",
+            side_effect=ValueError("approved overall assessment failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "overall assessment failed"):
                 evaluate_assessment(valid_configured_answers())
 
     def test_build_question_evaluations_invokes_approved_scoring_runtime(self):

@@ -10,6 +10,10 @@ from assessment.approved_dimension_weighting_runtime import (
     ApprovedDimensionWeightingResult,
     weight_approved_dimensions,
 )
+from assessment.approved_overall_assessment_runtime import (
+    ApprovedOverallAssessmentResult,
+    calculate_approved_overall_assessment,
+)
 from assessment.approved_question_scoring_runtime import (
     ApprovedQuestionScore,
     ApprovedQuestionScoringResult,
@@ -117,6 +121,9 @@ def evaluate_assessment(
     approved_dimension_weighting = weight_approved_dimensions(
         approved_dimension_aggregation,
     )
+    approved_overall_assessment = calculate_approved_overall_assessment(
+        approved_dimension_weighting,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -129,7 +136,14 @@ def evaluate_assessment(
         approved_dimension_weighting,
         approved_dimension_aggregation,
     )
-    return evaluate_decision(question_evaluations)
+    _validate_approved_overall_assessment_alignment(
+        approved_overall_assessment,
+        approved_dimension_weighting,
+    )
+    return _build_decision_result_with_approved_overall_score(
+        question_evaluations,
+        approved_overall_assessment,
+    )
 
 
 def build_question_evaluations(
@@ -203,6 +217,39 @@ def _validate_approved_dimension_weighting_alignment(
         raise ValueError(
             "Approved dimension weighting does not match dimension aggregation."
         )
+
+
+def _validate_approved_overall_assessment_alignment(
+    approved_overall_assessment: ApprovedOverallAssessmentResult,
+    approved_dimension_weighting: ApprovedDimensionWeightingResult,
+) -> None:
+    weighted_scores = {
+        dimension.dimension_id: dimension.weighted_score
+        for dimension in approved_dimension_weighting.dimensions
+    }
+    overall_contributions = {
+        contribution.dimension_id: contribution.weighted_score
+        for contribution in approved_overall_assessment.weighted_dimension_contributions
+    }
+
+    if overall_contributions != weighted_scores:
+        raise ValueError(
+            "Approved overall assessment does not match dimension weighting."
+        )
+
+
+def _build_decision_result_with_approved_overall_score(
+    question_evaluations: tuple[QuestionEvaluation, ...],
+    approved_overall_assessment: ApprovedOverallAssessmentResult,
+) -> DecisionEvaluationResult:
+    result = evaluate_decision(question_evaluations)
+    return DecisionEvaluationResult(
+        overall_score=approved_overall_assessment.overall_assessment_score,
+        total_weight=result.total_weight,
+        question_count=result.question_count,
+        dimensions=result.dimensions,
+        explanation=result.explanation,
+    )
 
 
 def _build_question_evaluation_from_approved_score(
