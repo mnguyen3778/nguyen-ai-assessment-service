@@ -9,6 +9,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import assessment.decision_engine as decision_engine_module  # noqa: E402
+from assessment.approved_confidence_runtime import (  # noqa: E402
+    ApprovedConfidenceAssessmentResult,
+)
 from assessment.approved_dimension_aggregation_runtime import (  # noqa: E402
     ApprovedDimensionAggregationResult,
 )
@@ -304,7 +307,81 @@ class DecisionEngineTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 ValueError,
-                "confidence classification does not match",
+                "Confidence classification does not match",
+            ):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_recommendation_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_recommendation",
+            wraps=decision_engine_module.determine_approved_recommendation,
+        ) as recommendation_mock:
+            result = evaluate_assessment(answers)
+
+        recommendation_mock.assert_called_once()
+        recommendation_input = recommendation_mock.call_args.args[0]
+        self.assertIsInstance(
+            recommendation_input,
+            ApprovedConfidenceAssessmentResult,
+        )
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_recommendation_runtime_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_recommendation",
+            side_effect=ValueError("approved recommendation failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "recommendation failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_recommendation_mismatches_confidence(self):
+        original_recommendation_runtime = (
+            decision_engine_module.determine_approved_recommendation
+        )
+
+        def mismatched_recommendation(confidence):
+            recommendation = original_recommendation_runtime(confidence)
+            return replace(
+                recommendation,
+                confidence_classification="very-high-confidence",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_recommendation",
+            side_effect=mismatched_recommendation,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "recommendation does not match confidence",
+            ):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_recommendation_mismatches_table(self):
+        original_recommendation_runtime = (
+            decision_engine_module.determine_approved_recommendation
+        )
+
+        def mismatched_recommendation(confidence):
+            recommendation = original_recommendation_runtime(confidence)
+            return replace(
+                recommendation,
+                recommendation_classification="planned-improvement",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_recommendation",
+            side_effect=mismatched_recommendation,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "recommendation classification does not match",
             ):
                 evaluate_assessment(valid_configured_answers())
 

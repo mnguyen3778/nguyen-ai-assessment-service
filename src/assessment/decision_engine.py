@@ -34,6 +34,10 @@ from assessment.approved_risk_runtime import (
     ApprovedRiskAssessmentResult,
     determine_approved_risk,
 )
+from assessment.approved_recommendation_runtime import (
+    ApprovedRecommendationAssessmentResult,
+    determine_approved_recommendation,
+)
 from assessment.approved_severity_runtime import (
     ApprovedSeverityAssessmentResult,
     READINESS_SEVERITY_DECISION_RULE_IDS,
@@ -156,6 +160,9 @@ def evaluate_assessment(
     approved_confidence = determine_approved_confidence(
         approved_risk,
     )
+    approved_recommendation = determine_approved_recommendation(
+        approved_confidence,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -187,6 +194,10 @@ def evaluate_assessment(
     _validate_approved_confidence_alignment(
         approved_confidence,
         approved_risk,
+    )
+    _validate_approved_recommendation_alignment(
+        approved_recommendation,
+        approved_confidence,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -426,6 +437,47 @@ def _validate_approved_confidence_alignment(
         != approved_risk.overall_assessment_score
     ):
         raise ValueError("Approved confidence does not match risk result.")
+
+
+def _validate_approved_recommendation_alignment(
+    approved_recommendation: ApprovedRecommendationAssessmentResult,
+    approved_confidence: ApprovedConfidenceAssessmentResult,
+) -> None:
+    try:
+        expected_recommendation_rule = (
+            APPROVED_METHODOLOGY_RUNTIME_CONFIG.recommendation_decision_rules[
+                approved_recommendation.recommendation_decision_identifier
+            ]
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "Approved recommendation decision does not match approved "
+            "recommendation decision tables."
+        ) from exc
+
+    if (
+        approved_recommendation.recommendation_decision_table_version
+        != expected_recommendation_rule.table_version
+        or approved_recommendation.recommendation_classification
+        != expected_recommendation_rule.output
+    ):
+        raise ValueError(
+            "Approved recommendation classification does not match approved "
+            "recommendation decision table."
+        )
+    if (
+        approved_recommendation.confidence_classification
+        != approved_confidence.confidence_classification
+        or approved_recommendation.risk_classification
+        != approved_confidence.risk_classification
+        or approved_recommendation.severity_classification
+        != approved_confidence.severity_classifications[0]
+        or approved_recommendation.readiness_classification
+        != approved_confidence.readiness_classification
+        or approved_recommendation.overall_assessment_score
+        != approved_confidence.overall_assessment_score
+    ):
+        raise ValueError("Approved recommendation does not match confidence result.")
 
 
 def _build_question_evaluation_from_approved_score(
