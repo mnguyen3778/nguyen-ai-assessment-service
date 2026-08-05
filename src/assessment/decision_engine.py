@@ -23,6 +23,11 @@ from assessment.approved_readiness_runtime import (
     ApprovedReadinessAssessmentResult,
     determine_approved_readiness,
 )
+from assessment.approved_severity_runtime import (
+    ApprovedSeverityAssessmentResult,
+    READINESS_SEVERITY_DECISION_RULE_IDS,
+    determine_approved_severity,
+)
 from assessment.methodology_config import (
     AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
@@ -131,6 +136,9 @@ def evaluate_assessment(
     approved_readiness = determine_approved_readiness(
         approved_overall_assessment,
     )
+    approved_severity = determine_approved_severity(
+        approved_readiness,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -150,6 +158,10 @@ def evaluate_assessment(
     _validate_approved_readiness_alignment(
         approved_readiness,
         approved_overall_assessment,
+    )
+    _validate_approved_severity_alignment(
+        approved_severity,
+        approved_readiness,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -293,6 +305,26 @@ def _validate_approved_readiness_alignment(
     if not (lower_matches and upper_matches):
         raise ValueError(
             "Approved readiness classification does not match threshold range."
+        )
+
+
+def _validate_approved_severity_alignment(
+    approved_severity: ApprovedSeverityAssessmentResult,
+    approved_readiness: ApprovedReadinessAssessmentResult,
+) -> None:
+    if (
+        approved_severity.readiness_classification
+        != approved_readiness.readiness_classification
+        or approved_severity.readiness_score != approved_readiness.readiness_score
+    ):
+        raise ValueError("Approved severity does not match readiness result.")
+
+    expected_rule_id = READINESS_SEVERITY_DECISION_RULE_IDS[
+        approved_readiness.readiness_threshold_id
+    ]
+    if approved_severity.severity_decision_identifier != expected_rule_id:
+        raise ValueError(
+            "Approved severity decision does not match readiness threshold."
         )
 
 
