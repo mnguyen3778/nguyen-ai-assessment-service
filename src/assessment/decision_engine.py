@@ -19,6 +19,10 @@ from assessment.approved_question_scoring_runtime import (
     ApprovedQuestionScoringResult,
     score_approved_questions,
 )
+from assessment.approved_readiness_runtime import (
+    ApprovedReadinessAssessmentResult,
+    determine_approved_readiness,
+)
 from assessment.methodology_config import (
     AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
@@ -124,6 +128,9 @@ def evaluate_assessment(
     approved_overall_assessment = calculate_approved_overall_assessment(
         approved_dimension_weighting,
     )
+    approved_readiness = determine_approved_readiness(
+        approved_overall_assessment,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -139,6 +146,10 @@ def evaluate_assessment(
     _validate_approved_overall_assessment_alignment(
         approved_overall_assessment,
         approved_dimension_weighting,
+    )
+    _validate_approved_readiness_alignment(
+        approved_readiness,
+        approved_overall_assessment,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -250,6 +261,39 @@ def _build_decision_result_with_approved_overall_score(
         dimensions=result.dimensions,
         explanation=result.explanation,
     )
+
+
+def _validate_approved_readiness_alignment(
+    approved_readiness: ApprovedReadinessAssessmentResult,
+    approved_overall_assessment: ApprovedOverallAssessmentResult,
+) -> None:
+    if (
+        approved_readiness.readiness_score
+        != approved_overall_assessment.overall_assessment_score
+    ):
+        raise ValueError(
+            "Approved readiness does not match overall assessment score."
+        )
+
+    lower_matches = (
+        approved_readiness.readiness_score
+        >= approved_readiness.threshold_lower_bound
+        if approved_readiness.threshold_lower_inclusive
+        else approved_readiness.readiness_score
+        > approved_readiness.threshold_lower_bound
+    )
+    upper_matches = (
+        approved_readiness.readiness_score
+        <= approved_readiness.threshold_upper_bound
+        if approved_readiness.threshold_upper_inclusive
+        else approved_readiness.readiness_score
+        < approved_readiness.threshold_upper_bound
+    )
+
+    if not (lower_matches and upper_matches):
+        raise ValueError(
+            "Approved readiness classification does not match threshold range."
+        )
 
 
 def _build_question_evaluation_from_approved_score(

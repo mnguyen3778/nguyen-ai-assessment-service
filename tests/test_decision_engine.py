@@ -18,6 +18,9 @@ from assessment.approved_dimension_weighting_runtime import (  # noqa: E402
 from assessment.approved_question_scoring_runtime import (  # noqa: E402
     ApprovedQuestionScoringResult,
 )
+from assessment.approved_overall_assessment_runtime import (  # noqa: E402
+    ApprovedOverallAssessmentResult,
+)
 from assessment.decision_engine import (  # noqa: E402
     QuestionEvaluation,
     build_question_evaluations,
@@ -112,6 +115,31 @@ class DecisionEngineTests(unittest.TestCase):
             side_effect=ValueError("approved overall assessment failed"),
         ):
             with self.assertRaisesRegex(ValueError, "overall assessment failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_readiness_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_readiness",
+            wraps=decision_engine_module.determine_approved_readiness,
+        ) as readiness_mock:
+            result = evaluate_assessment(answers)
+
+        readiness_mock.assert_called_once()
+        readiness_input = readiness_mock.call_args.args[0]
+        self.assertIsInstance(readiness_input, ApprovedOverallAssessmentResult)
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_readiness_runtime_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "determine_approved_readiness",
+            side_effect=ValueError("approved readiness failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "readiness failed"):
                 evaluate_assessment(valid_configured_answers())
 
     def test_build_question_evaluations_invokes_approved_scoring_runtime(self):
