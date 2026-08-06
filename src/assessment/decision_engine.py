@@ -10,6 +10,10 @@ from assessment.approved_dimension_weighting_runtime import (
     ApprovedDimensionWeightingResult,
     weight_approved_dimensions,
 )
+from assessment.approved_executive_summary_runtime import (
+    ApprovedExecutiveSummaryResult,
+    generate_approved_executive_summary,
+)
 from assessment.approved_confidence_runtime import (
     ApprovedConfidenceAssessmentResult,
     determine_approved_confidence,
@@ -163,6 +167,9 @@ def evaluate_assessment(
     approved_recommendation = determine_approved_recommendation(
         approved_confidence,
     )
+    approved_executive_summary = generate_approved_executive_summary(
+        approved_recommendation,
+    )
     question_evaluations = _build_question_evaluations_from_approved_scoring(
         approved_scoring,
         methodology_config,
@@ -198,6 +205,10 @@ def evaluate_assessment(
     _validate_approved_recommendation_alignment(
         approved_recommendation,
         approved_confidence,
+    )
+    _validate_approved_executive_summary_alignment(
+        approved_executive_summary,
+        approved_recommendation,
     )
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
@@ -478,6 +489,67 @@ def _validate_approved_recommendation_alignment(
         != approved_confidence.overall_assessment_score
     ):
         raise ValueError("Approved recommendation does not match confidence result.")
+
+
+def _validate_approved_executive_summary_alignment(
+    approved_executive_summary: ApprovedExecutiveSummaryResult,
+    approved_recommendation: ApprovedRecommendationAssessmentResult,
+) -> None:
+    if not isinstance(approved_executive_summary, ApprovedExecutiveSummaryResult):
+        raise ValueError(
+            "Approved Executive Summary Runtime did not produce an approved "
+            "Executive Summary artifact."
+        )
+    if (
+        approved_executive_summary.recommendation_classification
+        != approved_recommendation.recommendation_classification
+        or approved_executive_summary.confidence_classification
+        != approved_recommendation.confidence_classification
+        or approved_executive_summary.risk_classification
+        != approved_recommendation.risk_classification
+        or approved_executive_summary.severity_classification
+        != approved_recommendation.severity_classification
+        or approved_executive_summary.readiness_classification
+        != approved_recommendation.readiness_classification
+        or approved_executive_summary.overall_assessment_score
+        != approved_recommendation.overall_assessment_score
+        or approved_executive_summary.methodology_version
+        != approved_recommendation.methodology_version
+        or approved_executive_summary.runtime_config_version
+        != approved_recommendation.runtime_config_version
+    ):
+        raise ValueError(
+            "Approved Executive Summary does not match recommendation result."
+        )
+
+    expected_section_ids = tuple(
+        APPROVED_METHODOLOGY_RUNTIME_CONFIG.executive_summary_sections
+    )
+    observed_section_ids = tuple(
+        section.section_id
+        for section in approved_executive_summary.sections
+    )
+    if observed_section_ids != expected_section_ids:
+        raise ValueError(
+            "Approved Executive Summary sections do not match approved templates."
+        )
+
+    for section in approved_executive_summary.sections:
+        expected_section = (
+            APPROVED_METHODOLOGY_RUNTIME_CONFIG.executive_summary_sections[
+                section.section_id
+            ]
+        )
+        if (
+            section.heading != expected_section.heading
+            or section.section_order != expected_section.order
+            or section.template_id != expected_section.template_id
+            or section.template_version != expected_section.template_version
+        ):
+            raise ValueError(
+                "Approved Executive Summary section does not match approved "
+                "template configuration."
+            )
 
 
 def _build_question_evaluation_from_approved_score(

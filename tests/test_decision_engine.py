@@ -18,6 +18,9 @@ from assessment.approved_dimension_aggregation_runtime import (  # noqa: E402
 from assessment.approved_dimension_weighting_runtime import (  # noqa: E402
     ApprovedDimensionWeightingResult,
 )
+from assessment.approved_executive_summary_runtime import (  # noqa: E402
+    ApprovedExecutiveSummaryResult,
+)
 from assessment.approved_question_scoring_runtime import (  # noqa: E402
     ApprovedQuestionScoringResult,
 )
@@ -29,6 +32,9 @@ from assessment.approved_readiness_runtime import (  # noqa: E402
 )
 from assessment.approved_risk_runtime import (  # noqa: E402
     ApprovedRiskAssessmentResult,
+)
+from assessment.approved_recommendation_runtime import (  # noqa: E402
+    ApprovedRecommendationAssessmentResult,
 )
 from assessment.approved_severity_runtime import (  # noqa: E402
     ApprovedSeverityAssessmentResult,
@@ -381,7 +387,105 @@ class DecisionEngineTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 ValueError,
-                "recommendation classification does not match",
+                "Recommendation classification does not match",
+            ):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_invokes_approved_executive_summary_runtime(self):
+        answers = valid_configured_answers(scale_value=2, numeric_value=37)
+        generated_summaries = []
+        original_executive_summary_runtime = (
+            decision_engine_module.generate_approved_executive_summary
+        )
+
+        def capture_executive_summary(recommendation):
+            summary = original_executive_summary_runtime(recommendation)
+            generated_summaries.append(summary)
+            return summary
+
+        with patch.object(
+            decision_engine_module,
+            "generate_approved_executive_summary",
+            side_effect=capture_executive_summary,
+        ) as executive_summary_mock:
+            result = evaluate_assessment(answers)
+
+        executive_summary_mock.assert_called_once()
+        executive_summary_input = executive_summary_mock.call_args.args[0]
+        self.assertIsInstance(
+            executive_summary_input,
+            ApprovedRecommendationAssessmentResult,
+        )
+        self.assertEqual(len(generated_summaries), 1)
+        self.assertIsInstance(
+            generated_summaries[0],
+            ApprovedExecutiveSummaryResult,
+        )
+        self.assertEqual(
+            generated_summaries[0].recommendation_classification,
+            executive_summary_input.recommendation_classification,
+        )
+        self.assertEqual(result.question_count, 48)
+        self.assertAlmostEqual(result.overall_score, 49.832857142857144)
+
+    def test_evaluate_assessment_fails_closed_when_executive_summary_runtime_fails(self):
+        with patch.object(
+            decision_engine_module,
+            "generate_approved_executive_summary",
+            side_effect=ValueError("approved executive summary failed"),
+        ):
+            with self.assertRaisesRegex(ValueError, "executive summary failed"):
+                evaluate_assessment(valid_configured_answers())
+
+    def test_evaluate_assessment_fails_closed_when_executive_summary_mismatches_recommendation(self):
+        original_executive_summary_runtime = (
+            decision_engine_module.generate_approved_executive_summary
+        )
+
+        def mismatched_executive_summary(recommendation):
+            executive_summary = original_executive_summary_runtime(recommendation)
+            return replace(
+                executive_summary,
+                recommendation_classification="monitor",
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "generate_approved_executive_summary",
+            side_effect=mismatched_executive_summary,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Executive Summary does not match recommendation",
+            ):
+                evaluate_assessment(
+                    valid_configured_answers(scale_value=2, numeric_value=37)
+                )
+
+    def test_evaluate_assessment_fails_closed_when_executive_summary_template_mismatches(self):
+        original_executive_summary_runtime = (
+            decision_engine_module.generate_approved_executive_summary
+        )
+
+        def mismatched_executive_summary(recommendation):
+            executive_summary = original_executive_summary_runtime(recommendation)
+            first_section = replace(
+                executive_summary.sections[0],
+                template_id="unsupported-template",
+            )
+            return replace(
+                executive_summary,
+                sections=(first_section, *executive_summary.sections[1:]),
+            )
+
+        with patch.object(
+            decision_engine_module,
+            "generate_approved_executive_summary",
+            side_effect=mismatched_executive_summary,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "section does not match approved template",
             ):
                 evaluate_assessment(valid_configured_answers())
 
