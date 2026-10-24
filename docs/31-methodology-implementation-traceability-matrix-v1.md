@@ -1,5 +1,18 @@
 # Methodology-to-Implementation Traceability Matrix v1
 
+## Gap 2 governed producer delta
+
+The Gap 1 result now flows from `evaluate_assessment_v2` through executive
+orchestration into `business-decision-package-v2` and unchanged into
+`ExecutiveAssessmentSnapshot`. `severity_assigned_findings` map to
+`governedConclusions.severityAssignedFindings`; `risk` to `assessmentRisk`;
+`confidence` to `confidence`; `recommendations` to `recommendations`; and
+`executive_summary_inputs` to `executiveSummary`. The assessment and
+methodology identities remain `nguyen-ai-executive-assessment-v2` and
+`business-decision-methodology-v1`. Golden Fixture producer regression and
+same-score producer tests verify the mapping. V1 package output remains the
+legacy/foundation contract.
+
 ## Gap 1 governed Decision Engine input delta
 
 `nguyen-ai-executive-assessment-v2` is the versioned canonical input for
@@ -11,11 +24,10 @@ approved severity, risk, confidence, and recommendation tables to those
 inputs and supplies corrected internal Executive Summary decision inputs.
 The v1 `evaluate_assessment` path remains legacy/foundation behavior.
 
-The v2 input delta does not expand `DecisionEvaluationResult`,
-`BusinessDecisionPackage`, or `ExecutiveAssessmentSnapshot`. Current package
-limitation markers remain in force. Carrying governed conclusions into the
-producer output contracts remains Gap 2. The frozen v1 traceability record
-below describes the pre-Gap-1 baseline.
+The Gap 1 input delta did not expand `DecisionEvaluationResult` or producer
+contracts. Gap 2 publishes its governed conclusions in package v2, and the
+snapshot carries that package unchanged. The frozen v1 traceability record
+below describes the earlier baseline.
 
 ## 1. Purpose
 

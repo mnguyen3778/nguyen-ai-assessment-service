@@ -99,10 +99,10 @@ def orchestrate_executive_assessment(
 
     try:
         if isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInputV2):
-            decision_evaluation = evaluate_assessment_v2(
-                canonical_input, methodology_config
-            ).decision_evaluation
+            governed_result = evaluate_assessment_v2(canonical_input, methodology_config)
+            decision_evaluation = governed_result.decision_evaluation
         else:
+            governed_result = None
             decision_evaluation = evaluate_assessment(
                 canonical_input.answers,
                 methodology_config,
@@ -159,6 +159,7 @@ def orchestrate_executive_assessment(
             confidence_evaluation,
             recommendation_priority_evaluation,
             executive_summary_foundation,
+            governed_result=governed_result,
         )
     except (TypeError, ValueError, AttributeError) as exc:
         return ExecutiveOrchestrationResult(

@@ -6,8 +6,13 @@ from assessment.business_decision_package import (
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_LIMITATIONS,
     BUSINESS_DECISION_PACKAGE_SOURCE_COMPONENTS,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS,
     BusinessDecisionPackage,
 )
+from assessment.governed_assessment_input import EXECUTIVE_ASSESSMENT_VERSION_V2
+from assessment.governed_producer_validation import validate_governed_conclusions
+from assessment.methodology_config import METHODOLOGY_VERSION
 
 
 ROOT_FIELD_ORDER = (
@@ -20,6 +25,17 @@ ROOT_FIELD_ORDER = (
     "limitations",
     "versionMetadata",
 )
+GOVERNED_ROOT_FIELD_ORDER = ROOT_FIELD_ORDER + ("governedConclusions",)
+
+
+def _governed(package: BusinessDecisionPackage) -> bool:
+    return (package.version_metadata is not None and
+            package.version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+
+
+def _serialized_governed(package: Mapping[str, Any]) -> bool:
+    metadata = package.get("versionMetadata")
+    return isinstance(metadata, Mapping) and metadata.get("contractVersion") == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
 
 
 @dataclass(frozen=True)
@@ -68,6 +84,32 @@ def validate_business_decision_package(
     _validate_audit_metadata(package, issues)
     _validate_limitations(package, issues)
     _validate_source_consistency(package, issues)
+    if _governed(package):
+        if package.version_metadata.assessment_version != EXECUTIVE_ASSESSMENT_VERSION_V2 or package.version_metadata.methodology_version != METHODOLOGY_VERSION:
+            issues.append(_issue("governed-version-mismatch", "$.version_metadata", "Governed package version binding is invalid."))
+        if package.governed_conclusions is None:
+            issues.append(_issue("missing-governed-conclusions", "$.governed_conclusions", "Governed conclusions are required."))
+        else:
+            result = package.governed_conclusions
+            try:
+                assigned = result.severity_assigned_findings
+                source_mismatch = (not isinstance(assigned, tuple) or
+                result.decision_evaluation != package.decision_evaluation or
+                tuple(item.finding for item in assigned) != result.findings or
+                tuple(item.severity_assignment for item in assigned) != result.severity_assignments or
+                tuple(item.sequence_identifier for item in assigned) != tuple(range(1, len(assigned) + 1)) or
+                result.risk.severity_classifications != tuple(item.severity_classification for item in result.severity_assignments) or
+                result.confidence.risk_classification != result.risk.risk_classification or
+                result.executive_summary_inputs.risk_classification != result.risk.risk_classification or
+                result.executive_summary_inputs.confidence_classification != result.confidence.confidence_classification or
+                result.executive_summary_inputs.finding_count != len(assigned) or
+                result.executive_summary_inputs.recommendation_classifications != tuple(item.recommendation_classification for item in result.recommendations))
+            except (AttributeError, TypeError, ValueError):
+                source_mismatch = True
+            if source_mismatch:
+                issues.append(_issue("governed-source-mismatch", "$.governed_conclusions", "Governed source conclusions disagree."))
+    elif package.governed_conclusions is not None:
+        issues.append(_issue("legacy-governed-conclusions", "$.governed_conclusions", "Legacy package cannot carry governed conclusions."))
 
     try:
         serialized = package.to_dict()
@@ -111,6 +153,14 @@ def validate_business_decision_package_serialization(
     _validate_serialized_limitations(serialized_package, issues)
     _validate_serialized_component_presence(serialized_package, issues)
     _validate_serialized_invariants(serialized_package, issues)
+    if _serialized_governed(serialized_package):
+        metadata = serialized_package["versionMetadata"]
+        if metadata.get("assessmentVersion") != EXECUTIVE_ASSESSMENT_VERSION_V2 or metadata.get("methodologyVersion") != METHODOLOGY_VERSION:
+            issues.append(_issue("serialized-governed-version-mismatch", "$.versionMetadata", "Governed package version binding is invalid."))
+        try:
+            validate_governed_conclusions(serialized_package.get("governedConclusions"))
+        except (ValueError, TypeError, KeyError) as exc:
+            issues.append(_issue("invalid-governed-conclusions", "$.governedConclusions", str(exc)))
 
     return _result(issues)
 
@@ -151,7 +201,7 @@ def _validate_version_metadata(
         return
 
     version_metadata = package.version_metadata
-    if version_metadata.contract_version != BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+    if version_metadata.contract_version not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
         issues.append(
             _issue(
                 "contract-version-mismatch",
@@ -228,7 +278,9 @@ def _validate_limitations(
     if package.limitations is None:
         return
 
-    if package.limitations != BUSINESS_DECISION_PACKAGE_LIMITATIONS:
+    expected_limitations = (GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS if _governed(package)
+                            else BUSINESS_DECISION_PACKAGE_LIMITATIONS)
+    if package.limitations != expected_limitations:
         issues.append(
             _issue(
                 "limitations-mismatch",
@@ -334,7 +386,7 @@ def _validate_root_field_order(
     issues: list[BusinessDecisionPackageValidationIssue],
 ) -> None:
     observed_fields = tuple(serialized_package)
-    if observed_fields != ROOT_FIELD_ORDER:
+    if observed_fields != (GOVERNED_ROOT_FIELD_ORDER if _serialized_governed(serialized_package) else ROOT_FIELD_ORDER):
         issues.append(
             _issue(
                 "root-field-order-mismatch",
@@ -349,7 +401,7 @@ def _validate_root_required_fields(
     issues: list[BusinessDecisionPackageValidationIssue],
 ) -> None:
     observed_fields = set(serialized_package)
-    expected_fields = set(ROOT_FIELD_ORDER)
+    expected_fields = set(GOVERNED_ROOT_FIELD_ORDER if _serialized_governed(serialized_package) else ROOT_FIELD_ORDER)
 
     for missing_field in sorted(expected_fields - observed_fields):
         issues.append(
@@ -397,7 +449,7 @@ def _validate_serialized_version_metadata(
         issues,
     )
 
-    if metadata.get("contractVersion") != BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+    if metadata.get("contractVersion") not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
         issues.append(
             _issue(
                 "serialized-contract-version-mismatch",
@@ -483,7 +535,9 @@ def _validate_serialized_limitations(
         )
         return
 
-    if tuple(limitations) != BUSINESS_DECISION_PACKAGE_LIMITATIONS:
+    expected_limitations = (GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS if _serialized_governed(serialized_package)
+                            else BUSINESS_DECISION_PACKAGE_LIMITATIONS)
+    if tuple(limitations) != expected_limitations:
         issues.append(
             _issue(
                 "serialized-limitations-mismatch",

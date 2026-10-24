@@ -1,5 +1,13 @@
 # Executive Input Contract Versioning v1
 
+## Gap 2 producer outcome
+
+The separate producer workstream now publishes the governed input successor's
+conclusions through `business-decision-package-v2`, carried unchanged by the
+snapshot. The historical Gap 1 scope statement below records what was true
+at Gap 1 close; see `business-decision-package-contract-v2.md` for the output
+contract.
+
 ## Gap 1 governed input successor
 
 The governed Decision Engine input successor is

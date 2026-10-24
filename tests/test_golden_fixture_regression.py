@@ -16,6 +16,8 @@ from assessment.approved_overall_assessment_runtime import calculate_approved_ov
 from assessment.business_decision_package import (  # noqa: E402
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_LIMITATIONS,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS,
 )
 from assessment.decision_engine import evaluate_assessment_v2  # noqa: E402
 from assessment.executive_orchestration import (  # noqa: E402
@@ -174,14 +176,26 @@ class GoldenFixtureRegressionTests(unittest.TestCase):
                 self.assertTrue(orchestration.is_success, orchestration.failure)
                 package = orchestration.business_decision_package
                 self.assertEqual(package.version_metadata.contract_version,
-                                 BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                                 GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
                 self.assertEqual(package.version_metadata.assessment_version,
                                  EXECUTIVE_ASSESSMENT_VERSION_V2)
-                self.assertEqual(package.limitations, BUSINESS_DECISION_PACKAGE_LIMITATIONS)
+                self.assertEqual(package.limitations, GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS)
+                governed = package.to_dict()["governedConclusions"]
+                self.assertEqual(tuple(item["findingId"] for item in governed["severityAssignedFindings"]),
+                                 tuple(item.finding_id for item in canonical.findings))
+                self.assertEqual(tuple(item["severityClassification"] for item in governed["severityAssignedFindings"]), severities)
+                self.assertEqual(governed["assessmentRisk"]["riskClassification"], risk)
+                self.assertEqual(governed["confidence"]["confidenceClassification"], confidence)
+                self.assertEqual(tuple(item["recommendationClassification"] for item in governed["recommendations"]), actions)
+                self.assertEqual(tuple(item["recommendationDecisionIdentifier"] for item in governed["recommendations"]), rule_ids)
+                self.assertEqual(governed["executiveSummary"]["sectionText"], dict(summary.section_text))
+                produced = produce_executive_assessment_snapshot(canonical)
+                self.assertTrue(produced.is_success, produced.failure)
+                self.assertEqual(produced.serialized_snapshot["businessDecisionPackage"]["governedConclusions"], governed)
+                self.assertEqual(produced.serialized_snapshot["businessDecisionPackage"]["versionMetadata"], package.to_dict()["versionMetadata"])
 
     def test_existing_v1_package_snapshot_contract_remains_intact(self):
-        # This tests the frozen producer boundary only. Governed conclusions
-        # are verified through v2 above and remain internal until Gap 2.
+        # Legacy foundation output retains its original contract.
         for score in READINESS_BY_SCORE:
             with self.subTest(score=score):
                 legacy = ValidatedCanonicalExecutiveAssessmentInput(

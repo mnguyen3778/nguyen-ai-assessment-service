@@ -8,6 +8,7 @@ from assessment.decision_engine import (
     DimensionEvaluation,
     DimensionExplanation,
     EvaluationExplanation,
+    GovernedAssessmentResult,
     QuestionExplanation,
 )
 from assessment.executive_summary import ExecutiveSummaryFoundation
@@ -16,6 +17,7 @@ from assessment.snapshot import BusinessReadinessSnapshot
 
 
 BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION = "business-decision-package-v1"
+GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION = "business-decision-package-v2"
 BUSINESS_DECISION_PACKAGE_LIMITATIONS = (
     "final-confidence-formulas-not-implemented",
     "final-confidence-level-assignment-not-implemented",
@@ -27,6 +29,15 @@ BUSINESS_DECISION_PACKAGE_LIMITATIONS = (
     "evidence-ingestion-not-implemented",
     "persistence-not-implemented",
     "api-exposure-of-snapshot-consumers-not-implemented",
+)
+GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS = tuple(
+    item for item in BUSINESS_DECISION_PACKAGE_LIMITATIONS
+    if item not in {
+        "final-confidence-formulas-not-implemented",
+        "final-confidence-level-assignment-not-implemented",
+        "final-recommendation-assignment-not-implemented",
+        "recommendation-generation-not-implemented",
+    }
 )
 BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS = MappingProxyType(
     {
@@ -93,9 +104,10 @@ class BusinessDecisionPackage:
     audit: BusinessDecisionPackageAudit
     limitations: tuple[str, ...]
     version_metadata: BusinessDecisionPackageVersionMetadata
+    governed_conclusions: GovernedAssessmentResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "decisionEvaluation": _decision_evaluation_to_dict(
                 self.decision_evaluation
             ),
@@ -111,6 +123,11 @@ class BusinessDecisionPackage:
             "limitations": list(self.limitations),
             "versionMetadata": self.version_metadata.to_dict(),
         }
+        if self.version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+            if self.governed_conclusions is None:
+                raise ValueError("Governed conclusions are required for package v2.")
+            result["governedConclusions"] = _governed_conclusions_to_dict(self.governed_conclusions)
+        return result
 
 
 def build_business_decision_package(
@@ -119,6 +136,8 @@ def build_business_decision_package(
     confidence_evaluation: ConfidenceEvaluation,
     recommendation_priority_evaluation: RecommendationPriorityEvaluation,
     executive_summary_foundation: ExecutiveSummaryFoundation,
+    *,
+    governed_result: GovernedAssessmentResult | None = None,
 ) -> BusinessDecisionPackage:
     _validate_sources(
         decision_evaluation,
@@ -130,6 +149,13 @@ def build_business_decision_package(
 
     assessment_version = business_readiness_snapshot.assessment_version
     methodology_version = business_readiness_snapshot.audit.methodology_version
+    if governed_result is not None:
+        if not isinstance(governed_result, GovernedAssessmentResult):
+            raise ValueError("Governed package requires a Decision Engine result.")
+        if governed_result.decision_evaluation != decision_evaluation:
+            raise ValueError("Governed result does not match package evaluation.")
+        if governed_result.risk.methodology_version != methodology_version:
+            raise ValueError("Governed result methodology does not match package.")
 
     return BusinessDecisionPackage(
         decision_evaluation=decision_evaluation,
@@ -145,14 +171,62 @@ def build_business_decision_package(
             question_count=business_readiness_snapshot.audit.question_count,
             total_weight=business_readiness_snapshot.audit.total_weight,
         ),
-        limitations=BUSINESS_DECISION_PACKAGE_LIMITATIONS,
+        limitations=(GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS if governed_result is not None
+                     else BUSINESS_DECISION_PACKAGE_LIMITATIONS),
         version_metadata=BusinessDecisionPackageVersionMetadata(
-            contract_version=BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            contract_version=(GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION if governed_result is not None
+                              else BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION),
             assessment_version=assessment_version,
             methodology_version=methodology_version,
             component_versions=BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
         ),
+        governed_conclusions=governed_result,
     )
+
+
+def _governed_conclusions_to_dict(result: GovernedAssessmentResult) -> dict[str, Any]:
+    return {
+        "severityAssignedFindings": [
+            {
+                "findingId": item.finding.finding_id,
+                "title": item.finding.title,
+                "primaryDimension": item.finding.primary_dimension,
+                "relatedDimensions": list(item.finding.related_dimensions),
+                "triggerSource": item.finding.trigger_source,
+                "findingType": item.finding.finding_type,
+                "businessConsequenceBasis": item.finding.business_consequence_basis,
+                "sourceReferences": list(item.finding.source_references),
+                "sequenceIdentifier": item.sequence_identifier,
+                "severityClassification": item.severity_assignment.severity_classification,
+                "severityDecisionIdentifier": item.severity_assignment.severity_decision_identifier,
+                "severityDecisionTableVersion": item.severity_assignment.decision_table_version,
+            }
+            for item in result.severity_assigned_findings
+        ],
+        "assessmentRisk": {
+            "riskClassification": result.risk.risk_classification,
+            "riskDecisionIdentifier": result.risk.risk_decision_identifier,
+            "riskDecisionTableVersion": result.risk.risk_decision_table_version,
+        },
+        "confidence": {
+            "confidenceClassification": result.confidence.confidence_classification,
+            "confidenceDecisionIdentifier": result.confidence.confidence_decision_identifier,
+            "confidenceDecisionTableVersion": result.confidence.confidence_decision_table_version,
+        },
+        "recommendations": [
+            {
+                "findingId": item.finding_id,
+                "recommendationClassification": item.recommendation_classification,
+                "recommendationDecisionIdentifier": item.recommendation_decision_identifier,
+                "recommendationDecisionTableVersion": item.recommendation_decision_table_version,
+            }
+            for item in result.recommendations
+        ],
+        "executiveSummary": {
+            "findingCount": result.executive_summary_inputs.finding_count,
+            "sectionText": dict(result.executive_summary_inputs.section_text),
+        },
+    }
 
 
 def _validate_sources(

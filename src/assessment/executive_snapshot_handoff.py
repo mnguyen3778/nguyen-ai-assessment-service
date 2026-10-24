@@ -11,6 +11,7 @@ from assessment.executive_orchestration import (
     orchestrate_executive_assessment,
 )
 from assessment.executive_runtime import ExecutiveRuntime, ExecutiveRuntimeMetadata
+from assessment.governed_assessment_input import ValidatedCanonicalExecutiveAssessmentInputV2
 
 
 INPUT_CONTRACT_FAILURE = "INPUT_CONTRACT_FAILURE"
@@ -57,7 +58,8 @@ class ExecutiveSnapshotProductionResult:
 def produce_executive_assessment_snapshot(
     canonical_input: object,
 ) -> ExecutiveSnapshotProductionResult:
-    if not isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInput):
+    if not isinstance(canonical_input, (ValidatedCanonicalExecutiveAssessmentInput,
+                                        ValidatedCanonicalExecutiveAssessmentInputV2)):
         return ExecutiveSnapshotProductionResult(
             failure=_failure(
                 INPUT_CONTRACT_FAILURE,

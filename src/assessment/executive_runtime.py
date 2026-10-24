@@ -3,6 +3,7 @@ from typing import Any, Mapping
 
 from assessment.business_decision_package import (
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BusinessDecisionPackage,
 )
 from assessment.business_decision_package_validation import (
@@ -10,6 +11,7 @@ from assessment.business_decision_package_validation import (
     validate_business_decision_package_serialization,
 )
 from assessment.methodology_config import METHODOLOGY_VERSION
+from assessment.governed_assessment_input import EXECUTIVE_ASSESSMENT_VERSION_V2
 
 
 EXECUTIVE_ASSESSMENT_VERSION = "nguyen-ai-executive-assessment-v1"
@@ -427,7 +429,7 @@ def _validate_business_decision_package_input(
     else:
         if (
             version_metadata.contract_version
-            != BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+            not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
         ):
             issues.append(
                 _issue(
@@ -436,7 +438,8 @@ def _validate_business_decision_package_input(
                     "BusinessDecisionPackage contract version is not supported.",
                 )
             )
-        if version_metadata.assessment_version != EXECUTIVE_ASSESSMENT_VERSION:
+        expected_assessment_version = (EXECUTIVE_ASSESSMENT_VERSION_V2 if version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION else EXECUTIVE_ASSESSMENT_VERSION)
+        if version_metadata.assessment_version != expected_assessment_version:
             issues.append(
                 _issue(
                     "invalid-executive-assessment-version",

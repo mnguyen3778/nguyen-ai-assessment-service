@@ -346,6 +346,12 @@ Downstream systems remain consumers. They do not become decision engines.
 
 ## Versioning Considerations
 
+Gap 2 carries `business-decision-package-v2` inside the same snapshot envelope
+for governed executive assessment v2. The package version identifies the
+new nested truth; the snapshot still has no separate version field. Snapshot
+construction copies the validated package without recomputation, and its
+serialization validation applies the package v2 required-field rules.
+
 Sprint 9 does not introduce a snapshot contract version.
 
 Decision status:

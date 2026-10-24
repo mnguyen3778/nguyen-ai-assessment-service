@@ -1,5 +1,21 @@
 # Business Decision Package Versioning v1
 
+## Gap 2 successor application
+
+The required governed conclusions change the package root shape, so the
+existing incompatibility rule selects `business-decision-package-v2` for
+`nguyen-ai-executive-assessment-v2`. The original
+`business-decision-package-v1` shape remains the legacy/foundation contract.
+Both paths remain bound to `business-decision-methodology-v1`; this is an
+output contract change, not a methodology change. The v2 shape and migration
+guidance are recorded in
+`docs/architecture/business-decision-package-contract-v2.md`.
+
+`ExecutiveAssessmentSnapshot` continues to contain the package unchanged.
+Its existing response envelope identity is `executive-runtime-response-v1`;
+the package contract version identifies the nested deterministic truth. The
+snapshot has no independent version field under the existing snapshot rule.
+
 ## Purpose
 
 This document defines deterministic identity and versioning semantics for the

@@ -4,6 +4,7 @@ from typing import Any, Mapping
 from assessment.business_decision_package import (
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BusinessDecisionPackage,
 )
 from assessment.business_decision_package_validation import (
@@ -24,6 +25,7 @@ from assessment.executive_runtime import (
     ExecutiveRuntimeValidationResult,
 )
 from assessment.methodology_config import METHODOLOGY_VERSION
+from assessment.governed_assessment_input import EXECUTIVE_ASSESSMENT_VERSION_V2
 
 
 _SNAPSHOT_FIELDS = (
@@ -275,7 +277,7 @@ def _validate_snapshot_package_version_compatibility(
         )
         return
 
-    if version_metadata.contract_version != BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+    if version_metadata.contract_version not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
         issues.append(
             _issue(
                 "invalid-package-contract-version",
@@ -283,7 +285,8 @@ def _validate_snapshot_package_version_compatibility(
                 "Snapshot package contract version is not supported.",
             )
         )
-    if version_metadata.assessment_version != EXECUTIVE_ASSESSMENT_VERSION:
+    expected_assessment_version = (EXECUTIVE_ASSESSMENT_VERSION_V2 if version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION else EXECUTIVE_ASSESSMENT_VERSION)
+    if version_metadata.assessment_version != expected_assessment_version:
         issues.append(
             _issue(
                 "invalid-executive-assessment-version",
