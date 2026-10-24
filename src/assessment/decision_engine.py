@@ -47,6 +47,20 @@ from assessment.approved_severity_runtime import (
     READINESS_SEVERITY_DECISION_RULE_IDS,
     determine_approved_severity,
 )
+from assessment.governed_assessment_input import (
+    FindingInput,
+    ValidatedCanonicalExecutiveAssessmentInputV2,
+)
+from assessment.governed_decision_runtime import (
+    GovernedExecutiveSummaryInputs,
+    GovernedRecommendationResult,
+    GovernedSeverityAssignedFinding,
+    assign_governed_severity,
+    assess_governed_risk,
+    assess_governed_confidence,
+    recommend_governed_actions,
+    summarize_governed_decisions,
+)
 from assessment.methodology_config import (
     AnswerTypeConfig,
     BUSINESS_DECISION_METHODOLOGY,
@@ -114,6 +128,19 @@ class DecisionEvaluationResult:
     question_count: int
     dimensions: Mapping[str, DimensionEvaluation]
     explanation: EvaluationExplanation | None = None
+
+
+@dataclass(frozen=True)
+class GovernedAssessmentResult:
+    decision_evaluation: DecisionEvaluationResult
+    readiness: ApprovedReadinessAssessmentResult
+    findings: tuple[FindingInput, ...]
+    severity_assigned_findings: tuple[GovernedSeverityAssignedFinding, ...]
+    severity_assignments: tuple[ApprovedSeverityAssessmentResult, ...]
+    risk: ApprovedRiskAssessmentResult
+    confidence: ApprovedConfidenceAssessmentResult
+    recommendations: tuple[GovernedRecommendationResult, ...]
+    executive_summary_inputs: GovernedExecutiveSummaryInputs
 
 
 def evaluate_decision(
@@ -213,6 +240,87 @@ def evaluate_assessment(
     return _build_decision_result_with_approved_overall_score(
         question_evaluations,
         approved_overall_assessment,
+    )
+
+
+def evaluate_assessment_v2(
+    request: ValidatedCanonicalExecutiveAssessmentInputV2,
+    methodology_config: BusinessDecisionMethodologyConfig = (
+        BUSINESS_DECISION_METHODOLOGY
+    ),
+) -> GovernedAssessmentResult:
+    """Execute approved v1 tables with explicit governed v2 inputs."""
+    if not isinstance(request, ValidatedCanonicalExecutiveAssessmentInputV2):
+        raise ValueError("Governed v2 canonical executive input is required.")
+    # Validate again at the engine boundary; callers cannot bypass canonicalization.
+    request = ValidatedCanonicalExecutiveAssessmentInputV2(
+        request.assessment_version,
+        request.methodology_version,
+        request.answers,
+        request.evidence_profile,
+        request.findings,
+    )
+    validate_methodology_config(methodology_config)
+    if methodology_config.version != request.methodology_version:
+        raise ValueError("V2 methodology binding mismatch.")
+    scoring = score_approved_questions(request.answers, request.methodology_version)
+    aggregation = aggregate_approved_dimensions(scoring)
+    weighting = weight_approved_dimensions(aggregation)
+    overall = calculate_approved_overall_assessment(weighting)
+    readiness = determine_approved_readiness(overall)
+    question_evaluations = _build_question_evaluations_from_approved_scoring(
+        scoring, methodology_config
+    )
+    _validate_approved_dimension_aggregation_alignment(aggregation, question_evaluations)
+    _validate_approved_dimension_weighting_alignment(weighting, aggregation)
+    _validate_approved_overall_assessment_alignment(overall, weighting)
+    _validate_approved_readiness_alignment(readiness, overall)
+    severity_assignments = tuple(
+        assign_governed_severity(finding, readiness, request.evidence_profile)
+        for finding in request.findings
+    )
+    evidence_by_reference = {
+        item.source_reference: item.quality
+        for item in request.evidence_profile.items
+    }
+    severity_assigned_findings = tuple(
+        GovernedSeverityAssignedFinding(
+            finding=finding,
+            sequence_identifier=sequence,
+            linked_readiness=readiness.readiness_classification,
+            evidence_qualities=tuple(
+                evidence_by_reference[reference]
+                for reference in finding.source_references
+            ),
+            methodology_version=request.methodology_version,
+            severity_assignment=severity,
+        )
+        for sequence, (finding, severity) in enumerate(
+            zip(request.findings, severity_assignments), start=1
+        )
+    )
+    risk = assess_governed_risk(
+        severity_assigned_findings, readiness, request.evidence_profile
+    )
+    confidence = assess_governed_confidence(risk, request.evidence_profile)
+    recommendations = recommend_governed_actions(
+        request.findings, severity_assignments, risk, confidence
+    )
+    summary_inputs = summarize_governed_decisions(
+        request.findings, severity_assignments, risk, confidence, recommendations
+    )
+    return GovernedAssessmentResult(
+        decision_evaluation=_build_decision_result_with_approved_overall_score(
+            question_evaluations, overall
+        ),
+        readiness=readiness,
+        findings=request.findings,
+        severity_assigned_findings=severity_assigned_findings,
+        severity_assignments=severity_assignments,
+        risk=risk,
+        confidence=confidence,
+        recommendations=recommendations,
+        executive_summary_inputs=summary_inputs,
     )
 
 

@@ -1,5 +1,27 @@
 # Executive Input Contract Versioning v1
 
+## Gap 1 governed input successor
+
+The governed Decision Engine input successor is
+`nguyen-ai-executive-assessment-v2`. It requires a frozen canonical request
+containing `assessment_version`, `methodology_version`, all 48 canonical
+`answers`, `evidence_profile`, and the complete `findings` tuple. Explicit
+`findings=()` means a complete assessment with no Findings; a missing field is
+invalid. Evidence and Findings cannot be defaulted from score or readiness.
+
+The service binds executive assessment v2 to the existing approved
+`business-decision-methodology-v1`. No separate `inputContractVersion` is
+introduced. The existing v1 `evaluate_assessment` entry point remains a
+legacy/foundation path. Governed executive execution uses
+`evaluate_assessment_v2` and receives explicit evidence and Findings through
+the canonical input boundary.
+
+This input successor does not change the Business Decision Package or
+Executive Assessment Snapshot output shape or contract version. Publishing the
+corrected internal conclusions through those producer contracts remains the
+separate Gap 2 workstream. The v1 rules below describe the original input
+baseline and the compatibility policy that requires this v2 successor.
+
 ## Purpose
 
 This document finalizes the Sprint 6.3 architecture and governance decision

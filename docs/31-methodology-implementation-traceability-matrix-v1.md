@@ -1,5 +1,22 @@
 # Methodology-to-Implementation Traceability Matrix v1
 
+## Gap 1 governed Decision Engine input delta
+
+`nguyen-ai-executive-assessment-v2` is the versioned canonical input for
+governed evidence and Finding execution. Its five required fields are
+`assessment_version`, `methodology_version`, `answers`, `evidence_profile`,
+and `findings`. It is bound by the service to
+`business-decision-methodology-v1`. `evaluate_assessment_v2` applies the
+approved severity, risk, confidence, and recommendation tables to those
+inputs and supplies corrected internal Executive Summary decision inputs.
+The v1 `evaluate_assessment` path remains legacy/foundation behavior.
+
+The v2 input delta does not expand `DecisionEvaluationResult`,
+`BusinessDecisionPackage`, or `ExecutiveAssessmentSnapshot`. Current package
+limitation markers remain in force. Carrying governed conclusions into the
+producer output contracts remains Gap 2. The frozen v1 traceability record
+below describes the pre-Gap-1 baseline.
+
 ## 1. Purpose
 
 Status: `VERIFIED`

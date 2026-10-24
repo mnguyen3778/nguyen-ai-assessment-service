@@ -11,7 +11,11 @@ from assessment.business_decision_package_validation import (
     validate_business_decision_package,
 )
 from assessment.confidence import build_confidence_evaluation
-from assessment.decision_engine import evaluate_assessment
+from assessment.decision_engine import evaluate_assessment, evaluate_assessment_v2
+from assessment.governed_assessment_input import (
+    EXECUTIVE_ASSESSMENT_VERSION_V2,
+    ValidatedCanonicalExecutiveAssessmentInputV2,
+)
 from assessment.executive_runtime import EXECUTIVE_ASSESSMENT_VERSION
 from assessment.executive_summary import build_executive_summary_foundation
 from assessment.methodology_config import (
@@ -88,13 +92,21 @@ def orchestrate_executive_assessment(
     )
     if input_failure is not None:
         return ExecutiveOrchestrationResult(failure=input_failure)
-    assert isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInput)
+    assert isinstance(canonical_input, (
+        ValidatedCanonicalExecutiveAssessmentInput,
+        ValidatedCanonicalExecutiveAssessmentInputV2,
+    ))
 
     try:
-        decision_evaluation = evaluate_assessment(
-            canonical_input.answers,
-            methodology_config,
-        )
+        if isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInputV2):
+            decision_evaluation = evaluate_assessment_v2(
+                canonical_input, methodology_config
+            ).decision_evaluation
+        else:
+            decision_evaluation = evaluate_assessment(
+                canonical_input.answers,
+                methodology_config,
+            )
         business_readiness_snapshot = build_business_readiness_snapshot(
             canonical_input.assessment_version,
             decision_evaluation,
@@ -207,7 +219,10 @@ def _validate_orchestration_input(
     canonical_input: object,
     methodology_config: BusinessDecisionMethodologyConfig,
 ) -> ExecutiveOrchestrationFailure | None:
-    if not isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInput):
+    if not isinstance(canonical_input, (
+        ValidatedCanonicalExecutiveAssessmentInput,
+        ValidatedCanonicalExecutiveAssessmentInputV2,
+    )):
         return _failure(
             INPUT_CONTRACT_FAILURE,
             "invalid-canonical-input",
@@ -215,7 +230,12 @@ def _validate_orchestration_input(
             "Executive orchestration requires validated canonical executive input.",
         )
 
-    if canonical_input.assessment_version != EXECUTIVE_ASSESSMENT_VERSION:
+    expected_assessment_version = (
+        EXECUTIVE_ASSESSMENT_VERSION_V2
+        if isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInputV2)
+        else EXECUTIVE_ASSESSMENT_VERSION
+    )
+    if canonical_input.assessment_version != expected_assessment_version:
         return _failure(
             VERSION_COMPATIBILITY_FAILURE,
             "unsupported-assessment-version",
@@ -259,7 +279,11 @@ def _failure(
     code: str,
     stage: str,
     message: str,
-    canonical_input: ValidatedCanonicalExecutiveAssessmentInput | None = None,
+    canonical_input: (
+        ValidatedCanonicalExecutiveAssessmentInput
+        | ValidatedCanonicalExecutiveAssessmentInputV2
+        | None
+    ) = None,
     *,
     validation_issues: tuple[BusinessDecisionPackageValidationIssue, ...] = (),
     deterministic_evaluation_started: bool = False,
