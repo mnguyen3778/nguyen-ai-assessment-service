@@ -80,7 +80,7 @@ Create the function:
 ```bash
 aws lambda create-function \
   --region us-east-2 \
-  --function-name nguyen-ai-assessment-service \
+  --function-name nguyen-ai-assessment \
   --runtime python3.14 \
   --handler lambda_function.lambda_handler \
   --role arn:aws:iam::<account-id>:role/<lambda-execution-role-name> \
@@ -92,7 +92,7 @@ Update an existing function:
 ```bash
 aws lambda update-function-code \
   --region us-east-2 \
-  --function-name nguyen-ai-assessment-service \
+  --function-name nguyen-ai-assessment \
   --zip-file fileb://dist/nguyen-ai-assessment-service.zip
 ```
 
@@ -101,7 +101,7 @@ Confirm the configured handler and runtime:
 ```bash
 aws lambda get-function-configuration \
   --region us-east-2 \
-  --function-name nguyen-ai-assessment-service \
+  --function-name nguyen-ai-assessment \
   --query '{Runtime:Runtime,Handler:Handler,State:State,LastUpdateStatus:LastUpdateStatus}'
 ```
 
@@ -112,7 +112,7 @@ Create an HTTP API or REST API in `us-east-2` with a protected assessment route:
 - Method: `POST`
 - Path: `/assessment`
 - Integration type: Lambda proxy integration
-- Lambda function: `nguyen-ai-assessment-service`
+- Lambda function: `nguyen-ai-assessment`
 - Payload format version: `2.0` for HTTP API, or proxy integration for REST API
 
 For an HTTP API:
@@ -122,7 +122,7 @@ aws apigatewayv2 create-integration \
   --region us-east-2 \
   --api-id <api-id> \
   --integration-type AWS_PROXY \
-  --integration-uri arn:aws:lambda:us-east-2:<account-id>:function:nguyen-ai-assessment-service \
+  --integration-uri arn:aws:lambda:us-east-2:<account-id>:function:nguyen-ai-assessment \
   --payload-format-version 2.0
 ```
 
@@ -141,7 +141,7 @@ Allow API Gateway to invoke the Lambda function:
 ```bash
 aws lambda add-permission \
   --region us-east-2 \
-  --function-name nguyen-ai-assessment-service \
+  --function-name nguyen-ai-assessment \
   --statement-id allow-api-gateway-assessment \
   --action lambda:InvokeFunction \
   --principal apigateway.amazonaws.com \
