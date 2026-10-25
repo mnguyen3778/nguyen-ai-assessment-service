@@ -36,27 +36,42 @@ behavior requires them.
 
 ## Deployment Package Creation
 
+The live `nguyen-ai-assessment` ZIP Lambda in `us-east-2` uses Python 3.14
+on ARM64. Build dependencies for `manylinux2014_aarch64` even when
+packaging on macOS. Confirm native binaries report ELF ARM aarch64 before
+release.
+
 From the repository root:
 
 ```bash
-rm -rf build dist
-mkdir -p build/lambda-package dist
+set -e
+build_root=$(mktemp -d "${TMPDIR:-/tmp}/nguyen-ai-lambda.XXXXXX")
+package_dir="$build_root/package"
+mkdir -p "$package_dir" dist
 
-python3.14 -m pip install -r requirements.txt -t build/lambda-package
-cp src/lambda_function.py build/lambda-package/
-cp -R src/assessment build/lambda-package/
+python3.14 -m pip install \
+  --platform manylinux2014_aarch64 \
+  --implementation cp \
+  --python-version 3.14 \
+  --only-binary=:all: \
+  --no-compile \
+  --target "$package_dir" \
+  -r requirements.txt
+cp src/lambda_function.py "$package_dir/"
+cp -R src/assessment "$package_dir/"
 
-find build/lambda-package -type d -name '__pycache__' -prune -exec rm -rf {} +
-find build/lambda-package -type d -name '.pytest_cache' -prune -exec rm -rf {} +
-find build/lambda-package -name '*.py[cod]' -delete
+find "$package_dir" -type d -name '__pycache__' -prune -exec rm -rf {} +
+find "$package_dir" -type d -name '.pytest_cache' -prune -exec rm -rf {} +
+find "$package_dir" -name '*.py[cod]' -delete
 
-cd build/lambda-package
-zip -r ../../dist/nguyen-ai-assessment-service.zip .
-cd ../..
+(cd "$package_dir" && zip -qr "$build_root/nguyen-ai-assessment-service.zip" .)
+cp "$build_root/nguyen-ai-assessment-service.zip" dist/nguyen-ai-assessment-service.zip
+unzip -l dist/nguyen-ai-assessment-service.zip
+find "$package_dir" -type f -name '*.so' -exec file {} +
 ```
 
-`requirements.txt` intentionally contains no third-party dependencies today, so
-the pip install step is a no-op unless a future production dependency is added.
+`requirements.txt` pins `cryptography==50.0.2`. The Linux-targeted install also
+resolves its required transitive dependencies into the package directory.
 
 ## Lambda Creation Steps
 
