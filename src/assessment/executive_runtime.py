@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BusinessDecisionPackage,
@@ -194,10 +195,12 @@ class ExecutiveRuntime:
         runtime_metadata: object,
         *,
         production_authoritative: bool = False,
+        local_package_contract_version: str | None = None,
     ) -> ExecutiveRuntimeResult:
         validation_result = validate_executive_runtime_input(
             business_decision_package,
             runtime_metadata,
+            local_package_contract_version=local_package_contract_version,
         )
         if not validation_result.is_valid:
             return create_executive_runtime_error_response(
@@ -208,6 +211,11 @@ class ExecutiveRuntime:
         if not isinstance(business_decision_package, BusinessDecisionPackage):
             return create_executive_runtime_error_response(
                 EXECUTIVE_PACKAGE_INTEGRITY_FAILED,
+            )
+        if (local_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION and
+                production_authoritative is not False):
+            return create_executive_runtime_error_response(
+                EXECUTIVE_VERSION_INCOMPATIBLE,
             )
 
         return _create_executive_runtime_success_result(
@@ -281,11 +289,17 @@ def create_executive_runtime_error_response(
 def validate_executive_runtime_input(
     business_decision_package: object,
     runtime_metadata: object,
+    *,
+    local_package_contract_version: str | None = None,
 ) -> ExecutiveRuntimeValidationResult:
     issues: list[ExecutiveRuntimeValidationIssue] = []
 
     _validate_runtime_metadata(runtime_metadata, issues)
-    _validate_business_decision_package_input(business_decision_package, issues)
+    _validate_business_decision_package_input(
+        business_decision_package,
+        issues,
+        local_package_contract_version=local_package_contract_version,
+    )
 
     return _result(issues)
 
@@ -396,7 +410,17 @@ def _validate_runtime_metadata(
 def _validate_business_decision_package_input(
     business_decision_package: object,
     issues: list[ExecutiveRuntimeValidationIssue],
+    *,
+    local_package_contract_version: str | None = None,
 ) -> None:
+    if (local_package_contract_version is not None and
+            (type(local_package_contract_version) is not str or
+             local_package_contract_version != ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)):
+        issues.append(_issue(
+            "invalid-package-contract-version",
+            "$.businessDecisionPackage.versionMetadata.contractVersion",
+            "Local package version selection is not supported.",
+        ))
     if business_decision_package is None:
         issues.append(
             _issue(
@@ -427,10 +451,13 @@ def _validate_business_decision_package_input(
             )
         )
     else:
-        if (
-            version_metadata.contract_version
-            not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
-        ):
+        supported_versions = (
+            (ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,)
+            if local_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+            else (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                  GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+        )
+        if version_metadata.contract_version not in supported_versions:
             issues.append(
                 _issue(
                     "invalid-package-contract-version",
@@ -438,7 +465,10 @@ def _validate_business_decision_package_input(
                     "BusinessDecisionPackage contract version is not supported.",
                 )
             )
-        expected_assessment_version = (EXECUTIVE_ASSESSMENT_VERSION_V2 if version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION else EXECUTIVE_ASSESSMENT_VERSION)
+        expected_assessment_version = (EXECUTIVE_ASSESSMENT_VERSION_V2 if version_metadata.contract_version in (
+            GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ) else EXECUTIVE_ASSESSMENT_VERSION)
         if version_metadata.assessment_version != expected_assessment_version:
             issues.append(
                 _issue(

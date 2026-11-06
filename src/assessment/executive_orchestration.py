@@ -3,6 +3,8 @@ from types import MappingProxyType
 from typing import Mapping
 
 from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BusinessDecisionPackage,
     build_business_decision_package,
 )
@@ -85,7 +87,20 @@ def orchestrate_executive_assessment(
     methodology_config: BusinessDecisionMethodologyConfig = (
         BUSINESS_DECISION_METHODOLOGY
     ),
+    *,
+    governed_package_contract_version: str = GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
 ) -> ExecutiveOrchestrationResult:
+    if (type(governed_package_contract_version) is not str or
+            governed_package_contract_version not in (
+                GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            )):
+        return ExecutiveOrchestrationResult(failure=_failure(
+            VERSION_COMPATIBILITY_FAILURE,
+            "unsupported-package-contract-version",
+            "version-binding",
+            "Executive package version is not supported.",
+        ))
     input_failure = _validate_orchestration_input(
         canonical_input,
         methodology_config,
@@ -96,6 +111,15 @@ def orchestrate_executive_assessment(
         ValidatedCanonicalExecutiveAssessmentInput,
         ValidatedCanonicalExecutiveAssessmentInputV2,
     ))
+    if (governed_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION and
+            not isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInputV2)):
+        return ExecutiveOrchestrationResult(failure=_failure(
+            VERSION_COMPATIBILITY_FAILURE,
+            "legacy-v3-package-version",
+            "version-binding",
+            "Package v3 requires governed assessment v2.",
+            canonical_input,
+        ))
 
     try:
         if isinstance(canonical_input, ValidatedCanonicalExecutiveAssessmentInputV2):
@@ -160,6 +184,9 @@ def orchestrate_executive_assessment(
             recommendation_priority_evaluation,
             executive_summary_foundation,
             governed_result=governed_result,
+            **({"governed_package_contract_version": governed_package_contract_version}
+               if governed_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+               else {}),
         )
     except (TypeError, ValueError, AttributeError) as exc:
         return ExecutiveOrchestrationResult(

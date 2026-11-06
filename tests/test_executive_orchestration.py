@@ -1,6 +1,6 @@
 import sys
 import unittest
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,9 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import assessment.executive_orchestration as orchestration_module  # noqa: E402
 from assessment.business_decision_package import (  # noqa: E402
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_LIMITATIONS,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+)
+from assessment.approved_methodology_runtime_config import (  # noqa: E402
+    APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE,
 )
 from assessment.business_decision_package_validation import (  # noqa: E402
     BusinessDecisionPackageValidationIssue,
@@ -32,6 +37,8 @@ from assessment.methodology_config import (  # noqa: E402
     METHODOLOGY_VERSION,
 )
 from assessment.models import AssessmentRequest  # noqa: E402
+from assessment.governed_assessment_input import FindingInput  # noqa: E402
+from test_golden_fixture_regression import request  # noqa: E402
 
 
 def valid_configured_answers(scale_value=4, numeric_value=100):
@@ -54,6 +61,83 @@ def valid_canonical_input(scale_value=4, numeric_value=100):
 
 
 class ExecutiveOrchestrationTests(unittest.TestCase):
+    def test_explicit_local_v3_preserves_every_governed_decision(self):
+        cases = [
+            request(75, "adequate", "critical"),
+            request(75, "mixed-strong", "two-high"),
+            request(50, "adequate", "medium"),
+            request(50, "adequate", "low"),
+            request(100, "strong", "strength"),
+            request(50, "adequate", "none"),
+        ]
+        for kind, basis in (("Observation", "observation"),
+                            ("Opportunity", "opportunity")):
+            finding = FindingInput(
+                "finding-local-" + kind.lower(), "Local finding", "POC", (),
+                "fixture-input", kind, basis, ("fixture-input",),
+            )
+            cases.append(replace(request(50, "adequate", "none"),
+                                 findings=(finding,)))
+        seen = set()
+        fields = (
+            "findingId", "recommendationClassification",
+            "recommendationDecisionIdentifier", "recommendationDecisionTableVersion",
+        )
+        for canonical in cases:
+            with self.subTest(findings=canonical.findings):
+                v2 = orchestrate_executive_assessment(canonical)
+                v3 = orchestrate_executive_assessment(
+                    canonical,
+                    governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                )
+                self.assertTrue(v2.is_success, v2.failure)
+                self.assertTrue(v3.is_success, v3.failure)
+                old = v2.business_decision_package.to_dict()
+                new = v3.business_decision_package.to_dict()
+                self.assertEqual(old["versionMetadata"]["contractVersion"],
+                                 GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                self.assertEqual(new["versionMetadata"]["contractVersion"],
+                                 ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                self.assertEqual(v2.business_decision_package.governed_conclusions,
+                                 v3.business_decision_package.governed_conclusions)
+                self.assertEqual(v3.business_decision_package.to_dict(), new)
+                normalized = dict(new)
+                normalized["versionMetadata"] = dict(new["versionMetadata"],
+                    contractVersion=GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                normalized["governedConclusions"] = dict(new["governedConclusions"])
+                rows = []
+                for row in new["governedConclusions"]["recommendations"]:
+                    self.assertEqual(tuple(row), fields + ("recommendationActionText",))
+                    self.assertEqual(row["recommendationActionText"],
+                        APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE[
+                            row["recommendationDecisionIdentifier"]])
+                    seen.add(row["recommendationDecisionIdentifier"])
+                    rows.append({field: row[field] for field in fields})
+                normalized["governedConclusions"]["recommendations"] = rows
+                self.assertEqual(normalized, old)
+                self.assertTrue(all(tuple(row) == fields for row in
+                                    old["governedConclusions"]["recommendations"]))
+                if not canonical.findings:
+                    self.assertIsNone(rows[0]["findingId"])
+        self.assertEqual(seen, set(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE))
+
+    def test_v3_selection_rejects_unsupported_invalid_and_legacy_requests(self):
+        governed = request(50, "adequate", "none")
+        for selected in (None, 3, False, "business-decision-package-v4"):
+            with self.subTest(selected=selected):
+                result = orchestrate_executive_assessment(
+                    governed, governed_package_contract_version=selected)
+                self.assertFalse(result.is_success)
+                self.assertEqual(result.failure.category, VERSION_COMPATIBILITY_FAILURE)
+                self.assertFalse(result.failure.deterministic_evaluation_started)
+        legacy = orchestrate_executive_assessment(
+            valid_canonical_input(),
+            governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        )
+        self.assertFalse(legacy.is_success)
+        self.assertEqual(legacy.failure.code, "legacy-v3-package-version")
+        self.assertFalse(legacy.failure.deterministic_evaluation_started)
+
     def test_orchestration_produces_deterministic_validated_package(self):
         canonical_input = valid_canonical_input(scale_value=3, numeric_value=80)
 

@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from dataclasses import FrozenInstanceError, replace
@@ -6,7 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from assessment.business_decision_package import (  # noqa: E402
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BusinessDecisionPackageVersionMetadata,
     build_business_decision_package,
@@ -42,6 +45,16 @@ from assessment.recommendation_priority import (  # noqa: E402
     build_recommendation_priority_evaluation,
 )
 from assessment.snapshot import build_business_readiness_snapshot  # noqa: E402
+from assessment.executive_orchestration import orchestrate_executive_assessment  # noqa: E402
+from assessment.executive_snapshot_handoff import produce_executive_assessment_snapshot  # noqa: E402
+from assessment.executive_assessment_snapshot import (  # noqa: E402
+    validate_executive_assessment_snapshot_serialization,
+)
+from assessment.producer_snapshot_attestation import (  # noqa: E402
+    ProducerSnapshotIssuer, ProducerSnapshotVerifier,
+    V3_VERIFICATION_CONTRACT_VERSION,
+)
+from test_golden_fixture_regression import request  # noqa: E402
 
 
 def valid_configured_answers(scale_value=4, numeric_value=100):
@@ -93,6 +106,90 @@ def issue_codes(validation_result):
 
 
 class ExecutiveRuntimeFoundationTests(unittest.TestCase):
+    def test_explicit_local_v3_runtime_output_is_validated_and_attested(self):
+        canonical = request(50, "adequate", "none")
+        orchestration = orchestrate_executive_assessment(
+            canonical,
+            governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        )
+        self.assertTrue(orchestration.is_success, orchestration.failure)
+        result = ExecutiveRuntime().execute(
+            orchestration.business_decision_package,
+            valid_runtime_metadata(),
+            local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        )
+        self.assertTrue(result.is_success, result.error)
+        payload = result.to_dict()
+        self.assertEqual(payload["responseStatus"]["productionAuthority"],
+                         NOT_PRODUCTION_AUTHORITATIVE)
+        self.assertTrue(validate_executive_assessment_snapshot_serialization(payload).is_valid)
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        key = Ed25519PrivateKey.generate()
+        issuer = ProducerSnapshotIssuer(
+            key, issuer_id="nguyen-ai-assessment", key_id="local-v3-runtime-test",
+            producer_release_commit="a075a679a053ee9d0eb9a32d7f0ffa2dc796f0da",
+            verification_contract_version=V3_VERIFICATION_CONTRACT_VERSION,
+        )
+        verifier = ProducerSnapshotVerifier(
+            trusted_issuer_id="nguyen-ai-assessment",
+            trusted_keys={"local-v3-runtime-test": key.public_key()},
+            expected_release_commit="a075a679a053ee9d0eb9a32d7f0ffa2dc796f0da",
+            verification_contract_version=V3_VERIFICATION_CONTRACT_VERSION,
+        )
+        self.assertIsNone(verifier.verify(raw, issuer.issue(raw)))
+
+    def test_explicit_local_v3_runtime_admission_is_version_bound(self):
+        canonical = request(75, "adequate", "critical")
+        v2 = orchestrate_executive_assessment(canonical).business_decision_package
+        v3 = orchestrate_executive_assessment(
+            canonical,
+            governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ).business_decision_package
+        runtime = ExecutiveRuntime()
+        metadata = valid_runtime_metadata()
+        self.assertTrue(runtime.execute(v2, metadata).is_success)
+        self.assertFalse(runtime.execute(v3, metadata).is_success)
+        self.assertTrue(runtime.execute(
+            v3, metadata,
+            local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ).is_success)
+        self.assertFalse(runtime.execute(
+            v2, metadata,
+            local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ).is_success)
+        self.assertFalse(runtime.execute(
+            v3, metadata,
+            local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            production_authoritative=True,
+        ).is_success)
+        for selected in (None, 3, "business-decision-package-v4"):
+            with self.subTest(selected=selected):
+                self.assertFalse(runtime.execute(
+                    v3, metadata, local_package_contract_version=selected,
+                ).is_success)
+
+    def test_local_v3_runtime_rejects_tampered_governed_result_and_handoff_stays_v2(self):
+        canonical = request(50, "adequate", "none")
+        v3 = orchestrate_executive_assessment(
+            canonical,
+            governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ).business_decision_package
+        item = v3.governed_conclusions.recommendations[0]
+        changed = replace(item, recommendation_decision_identifier="unknown-rule")
+        invalid = replace(v3, governed_conclusions=replace(
+            v3.governed_conclusions, recommendations=(changed,)))
+        self.assertFalse(ExecutiveRuntime().execute(
+            invalid, valid_runtime_metadata(),
+            local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ).is_success)
+        produced = produce_executive_assessment_snapshot(canonical)
+        self.assertTrue(produced.is_success, produced.failure)
+        package = produced.serialized_snapshot["businessDecisionPackage"]
+        self.assertEqual(package["versionMetadata"]["contractVersion"],
+                         "business-decision-package-v2")
+        self.assertNotIn("recommendationActionText",
+                         package["governedConclusions"]["recommendations"][0])
+
     def test_executive_runtime_execute_returns_success_response(self):
         package = valid_executive_package(scale_value=3, numeric_value=75)
         runtime = ExecutiveRuntime()
