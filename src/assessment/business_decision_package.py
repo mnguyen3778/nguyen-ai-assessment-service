@@ -2,6 +2,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from assessment.approved_methodology_runtime_config import (
+    APPROVED_METHODOLOGY_RUNTIME_CONFIG,
+    NO_FINDINGS_RECOMMENDATION_RULE_ID,
+    approved_recommendation_action_text,
+)
 from assessment.confidence import ConfidenceEvaluation
 from assessment.decision_engine import (
     DecisionEvaluationResult,
@@ -12,12 +17,16 @@ from assessment.decision_engine import (
     QuestionExplanation,
 )
 from assessment.executive_summary import ExecutiveSummaryFoundation
+from assessment.governed_assessment_input import EXECUTIVE_ASSESSMENT_VERSION_V2
+from assessment.governed_decision_runtime import RECOMMENDATION_RULE_BY_FINDING
+from assessment.methodology_config import METHODOLOGY_VERSION
 from assessment.recommendation_priority import RecommendationPriorityEvaluation
 from assessment.snapshot import BusinessReadinessSnapshot
 
 
 BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION = "business-decision-package-v1"
 GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION = "business-decision-package-v2"
+ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION = "business-decision-package-v3"
 BUSINESS_DECISION_PACKAGE_LIMITATIONS = (
     "final-confidence-formulas-not-implemented",
     "final-confidence-level-assignment-not-implemented",
@@ -123,10 +132,27 @@ class BusinessDecisionPackage:
             "limitations": list(self.limitations),
             "versionMetadata": self.version_metadata.to_dict(),
         }
-        if self.version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+        if self.version_metadata.contract_version in (
+            GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ):
             if self.governed_conclusions is None:
-                raise ValueError("Governed conclusions are required for package v2.")
-            result["governedConclusions"] = _governed_conclusions_to_dict(self.governed_conclusions)
+                raise ValueError("Governed conclusions are required for governed packages.")
+            if (self.version_metadata.contract_version ==
+                    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION and
+                    (self.version_metadata.assessment_version != EXECUTIVE_ASSESSMENT_VERSION_V2 or
+                     self.version_metadata.methodology_version != METHODOLOGY_VERSION or
+                     self.governed_conclusions.risk.methodology_version != METHODOLOGY_VERSION)):
+                raise ValueError("Unsupported package v3 version binding.")
+            result["governedConclusions"] = _governed_conclusions_to_dict(
+                self.governed_conclusions,
+                include_action_text=(
+                    self.version_metadata.contract_version ==
+                    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+                ),
+            )
+        elif self.version_metadata.contract_version != BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+            raise ValueError("Unsupported business decision package contract version.")
         return result
 
 
@@ -138,7 +164,15 @@ def build_business_decision_package(
     executive_summary_foundation: ExecutiveSummaryFoundation,
     *,
     governed_result: GovernedAssessmentResult | None = None,
+    governed_package_contract_version: str = GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
 ) -> BusinessDecisionPackage:
+    if governed_package_contract_version not in (
+        GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    ):
+        raise ValueError("Unsupported governed package contract version.")
+    if governed_result is None and governed_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION:
+        raise ValueError("Package v3 requires a governed assessment result.")
     _validate_sources(
         decision_evaluation,
         business_readiness_snapshot,
@@ -149,6 +183,10 @@ def build_business_decision_package(
 
     assessment_version = business_readiness_snapshot.assessment_version
     methodology_version = business_readiness_snapshot.audit.methodology_version
+    if (governed_package_contract_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION and
+            (assessment_version != EXECUTIVE_ASSESSMENT_VERSION_V2 or
+             methodology_version != METHODOLOGY_VERSION)):
+        raise ValueError("Package v3 requires supported governed assessment and methodology versions.")
     if governed_result is not None:
         if not isinstance(governed_result, GovernedAssessmentResult):
             raise ValueError("Governed package requires a Decision Engine result.")
@@ -174,7 +212,7 @@ def build_business_decision_package(
         limitations=(GOVERNED_BUSINESS_DECISION_PACKAGE_LIMITATIONS if governed_result is not None
                      else BUSINESS_DECISION_PACKAGE_LIMITATIONS),
         version_metadata=BusinessDecisionPackageVersionMetadata(
-            contract_version=(GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION if governed_result is not None
+            contract_version=(governed_package_contract_version if governed_result is not None
                               else BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION),
             assessment_version=assessment_version,
             methodology_version=methodology_version,
@@ -184,8 +222,12 @@ def build_business_decision_package(
     )
 
 
-def _governed_conclusions_to_dict(result: GovernedAssessmentResult) -> dict[str, Any]:
-    return {
+def _governed_conclusions_to_dict(
+    result: GovernedAssessmentResult,
+    *,
+    include_action_text: bool = False,
+) -> dict[str, Any]:
+    serialized = {
         "severityAssignedFindings": [
             {
                 "findingId": item.finding.finding_id,
@@ -227,6 +269,44 @@ def _governed_conclusions_to_dict(result: GovernedAssessmentResult) -> dict[str,
             "sectionText": dict(result.executive_summary_inputs.section_text),
         },
     }
+    if include_action_text:
+        finding_ids = tuple(
+            assigned.finding.finding_id for assigned in result.severity_assigned_findings
+        )
+        if (finding_ids != tuple(sorted(set(finding_ids))) or
+                len(result.recommendations) != max(1, len(finding_ids))):
+            raise ValueError("Invalid governed recommendation order or count for package v3.")
+        for index, (item, row) in enumerate(zip(
+            result.recommendations, serialized["recommendations"]
+        )):
+            expected_finding_id = finding_ids[index] if finding_ids else None
+            if item.finding_id != expected_finding_id:
+                raise ValueError("Invalid governed recommendation finding linkage for package v3.")
+            if (not finding_ids and item.recommendation_decision_identifier !=
+                    NO_FINDINGS_RECOMMENDATION_RULE_ID):
+                raise ValueError("Invalid no-findings recommendation for package v3.")
+            if (finding_ids and item.recommendation_decision_identifier ==
+                    NO_FINDINGS_RECOMMENDATION_RULE_ID):
+                raise ValueError("No-findings rule cannot be finding-scoped.")
+            if finding_ids:
+                assigned = result.severity_assigned_findings[index]
+                expected_rule_id = RECOMMENDATION_RULE_BY_FINDING.get((
+                    assigned.finding.finding_type,
+                    assigned.severity_assignment.severity_classification,
+                ))
+                if item.recommendation_decision_identifier != expected_rule_id:
+                    raise ValueError("Recommendation rule does not match its finding and severity.")
+            rule = APPROVED_METHODOLOGY_RUNTIME_CONFIG.recommendation_decision_rules.get(
+                item.recommendation_decision_identifier
+            )
+            if rule is None or rule.output != item.recommendation_classification:
+                raise ValueError("Unsupported governed recommendation rule or classification.")
+            row["recommendationActionText"] = approved_recommendation_action_text(
+                item.recommendation_decision_identifier,
+                item.recommendation_decision_table_version,
+                result.risk.methodology_version,
+            )
+    return serialized
 
 
 def _validate_sources(

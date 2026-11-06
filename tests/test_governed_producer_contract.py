@@ -12,12 +12,21 @@ from assessment.business_decision_package_validation import (
     validate_business_decision_package,
     validate_business_decision_package_serialization,
 )
+from assessment.approved_methodology_runtime_config import (
+    APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE,
+)
+from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    build_business_decision_package,
+)
 from assessment.decision_engine import evaluate_assessment_v2
 from assessment.executive_assessment_snapshot import (
     validate_executive_assessment_snapshot_serialization,
 )
 from assessment.executive_orchestration import orchestrate_executive_assessment
 from assessment.executive_snapshot_handoff import produce_executive_assessment_snapshot
+from assessment.governed_assessment_input import FindingInput
 from test_golden_fixture_regression import request
 
 
@@ -32,7 +41,125 @@ def package_and_snapshot(score, profile, findings):
     return engine, package, produced.serialized_snapshot
 
 
+def local_v3_package(canonical):
+    orchestration = orchestrate_executive_assessment(canonical)
+    assert orchestration.is_success, orchestration.failure
+    v2 = orchestration.business_decision_package
+    v3 = build_business_decision_package(
+        v2.decision_evaluation,
+        v2.business_readiness_snapshot,
+        v2.confidence_evaluation,
+        v2.recommendation_priority_evaluation,
+        v2.executive_summary_foundation,
+        governed_result=v2.governed_conclusions,
+        governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    )
+    return v2, v3
+
+
 class GovernedProducerContractTests(unittest.TestCase):
+    def test_local_v3_serialization_is_explicit_exact_and_deterministic(self):
+        cases = (
+            request(75, "adequate", "critical"),
+            request(75, "mixed-strong", "two-high"),
+            request(50, "adequate", "medium"),
+            request(50, "adequate", "low"),
+            request(100, "strong", "strength"),
+            request(50, "adequate", "none"),
+        )
+        for kind, basis in (("Observation", "observation"),
+                            ("Opportunity", "opportunity")):
+            finding = FindingInput(
+                "finding-local-" + kind.lower(), "Local finding", "POC", (),
+                "fixture-input", kind, basis, ("fixture-input",),
+            )
+            cases += (replace(request(50, "adequate", "none"),
+                              findings=(finding,)),)
+
+        observed_rules = set()
+        fields_v2 = (
+            "findingId", "recommendationClassification",
+            "recommendationDecisionIdentifier", "recommendationDecisionTableVersion",
+        )
+        for canonical in cases:
+            with self.subTest(findings=canonical.findings):
+                v2, v3 = local_v3_package(canonical)
+                old = v2.to_dict()
+                new = v3.to_dict()
+                self.assertEqual(v2.version_metadata.contract_version,
+                                 GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                self.assertEqual(v3.version_metadata.contract_version,
+                                 ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+                self.assertEqual(new, v3.to_dict())
+                self.assertEqual(old, v2.to_dict())
+                self.assertEqual(v2.governed_conclusions, v3.governed_conclusions)
+                old_rows = old["governedConclusions"]["recommendations"]
+                new_rows = new["governedConclusions"]["recommendations"]
+                self.assertEqual(len(old_rows), len(new_rows))
+                for old_row, new_row in zip(old_rows, new_rows):
+                    self.assertEqual(tuple(old_row), fields_v2)
+                    self.assertEqual(tuple(new_row), fields_v2 + ("recommendationActionText",))
+                    self.assertEqual({key: new_row[key] for key in fields_v2}, old_row)
+                    self.assertEqual(new_row["recommendationActionText"],
+                                     APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE[
+                                         old_row["recommendationDecisionIdentifier"]])
+                    observed_rules.add(old_row["recommendationDecisionIdentifier"])
+                self.assertFalse(validate_business_decision_package_serialization(new).is_valid)
+        self.assertEqual(observed_rules, set(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE))
+
+    def test_no_findings_v3_is_local_and_v2_snapshot_has_no_action_text(self):
+        canonical = request(50, "adequate", "none")
+        v2, v3 = local_v3_package(canonical)
+        row = v3.to_dict()["governedConclusions"]["recommendations"][0]
+        self.assertIsNone(row["findingId"])
+        self.assertEqual(row["recommendationClassification"], "monitor")
+        self.assertEqual(row["recommendationDecisionIdentifier"],
+                         "recommendation-v1-no-findings-monitor")
+        produced = produce_executive_assessment_snapshot(canonical)
+        self.assertTrue(produced.is_success)
+        self.assertEqual(produced.serialized_snapshot["businessDecisionPackage"], v2.to_dict())
+        self.assertNotIn("recommendationActionText",
+                         produced.serialized_snapshot["businessDecisionPackage"][
+                             "governedConclusions"]["recommendations"][0])
+
+    def test_local_v3_selection_and_serialization_fail_closed(self):
+        canonical = request(75, "adequate", "critical")
+        v2, v3 = local_v3_package(canonical)
+        sources = (
+            v2.decision_evaluation, v2.business_readiness_snapshot,
+            v2.confidence_evaluation, v2.recommendation_priority_evaluation,
+            v2.executive_summary_foundation,
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported governed package"):
+            build_business_decision_package(*sources, governed_result=v2.governed_conclusions,
+                                            governed_package_contract_version="unsupported")
+        with self.assertRaisesRegex(ValueError, "requires a governed"):
+            build_business_decision_package(*sources,
+                                            governed_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+        item = v3.governed_conclusions.recommendations[0]
+        for changed in (
+            replace(item, recommendation_decision_identifier="unknown-rule"),
+            replace(item, recommendation_decision_identifier="recommendation-v1-reject-missing-risk"),
+            replace(item, recommendation_classification="monitor"),
+            replace(item, recommendation_decision_table_version="unsupported-version"),
+            replace(item, finding_id="other-finding"),
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                altered = replace(v3, governed_conclusions=replace(
+                    v3.governed_conclusions, recommendations=(changed,)))
+                altered.to_dict()
+        _, medium_v3 = local_v3_package(request(50, "adequate", "medium"))
+        medium_item = medium_v3.governed_conclusions.recommendations[0]
+        wrong_rule_same_classification = replace(
+            medium_item,
+            recommendation_decision_identifier="recommendation-v1-deficiency-low-planned",
+        )
+        with self.assertRaisesRegex(ValueError, "does not match its finding"):
+            replace(medium_v3, governed_conclusions=replace(
+                medium_v3.governed_conclusions,
+                recommendations=(wrong_rule_same_classification,),
+            )).to_dict()
+
     def test_package_snapshot_converge_and_empty_findings_are_explicit(self):
         engine, package, snapshot = package_and_snapshot(50, "adequate", "none")
         truth = package.to_dict()["governedConclusions"]

@@ -1338,6 +1338,65 @@ RECOMMENDATION_DECISION_RULES = _map_by_id(
 )
 
 
+# Approved Recommendation Action-Text Methodology Addendum v1. These values
+# describe existing governed decisions; they do not participate in selection.
+NO_FINDINGS_RECOMMENDATION_RULE_ID = "recommendation-v1-no-findings-monitor"
+APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE = MappingProxyType({
+    "recommendation-v1-deficiency-critical-immediate": (
+        "Take immediate action in response to the identified critical deficiency."
+    ),
+    "recommendation-v1-deficiency-high-priority": (
+        "Take near-term action in response to the identified high-severity deficiency."
+    ),
+    "recommendation-v1-deficiency-medium-planned": (
+        "Plan an improvement in response to the identified deficiency affecting effectiveness or consistency."
+    ),
+    "recommendation-v1-deficiency-low-planned": (
+        "Plan an improvement for the identified limited weakness."
+    ),
+    "recommendation-v1-observation-monitor": (
+        "Monitor the identified observation as assessment or improvement context."
+    ),
+    "recommendation-v1-strength-best-practice": (
+        "Consider preserving or reusing the practice reflected in the identified strength."
+    ),
+    "recommendation-v1-opportunity-best-practice": (
+        "Consider the identified opportunity as a basis for practice improvement."
+    ),
+    NO_FINDINGS_RECOMMENDATION_RULE_ID: (
+        "Monitor the assessment context after this completed assessment, which generated no findings."
+    ),
+})
+
+
+def approved_recommendation_action_text(
+    rule_id: str,
+    decision_table_version: str,
+    methodology_version: str,
+    *,
+    action_text_by_rule: Mapping[str, str] = APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE,
+) -> str:
+    """Resolve only the exact approved text for a version-bound emitting rule."""
+    if type(rule_id) is not str:
+        raise ValueError("Unsupported recommendation action-text rule.")
+    if (decision_table_version != RECOMMENDATION_DECISION_TABLE_SET_VERSION or
+            methodology_version != METHODOLOGY_VERSION):
+        raise ValueError("Unsupported recommendation action-text version binding.")
+    emitting_rules = {
+        identifier for identifier, rule in RECOMMENDATION_DECISION_RULES.items()
+        if rule.output
+    }
+    if (not isinstance(action_text_by_rule, Mapping) or
+            set(action_text_by_rule) != emitting_rules or
+            dict(action_text_by_rule) != dict(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE)):
+        raise ValueError("Missing or conflicting approved recommendation action text.")
+    rule = RECOMMENDATION_DECISION_RULES.get(rule_id)
+    if (rule is None or not rule.output or
+            rule.table_version != decision_table_version):
+        raise ValueError("Unsupported recommendation action-text rule.")
+    return action_text_by_rule[rule_id]
+
+
 EXECUTIVE_SUMMARY_SECTIONS = _map_by_id(
     (
         ExecutiveSummarySectionRuntimeConfig(

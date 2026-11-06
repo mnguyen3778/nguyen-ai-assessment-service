@@ -12,6 +12,7 @@ from assessment.approved_methodology_runtime_config import (  # noqa: E402
     APPROVED_DIMENSION_ORDER,
     APPROVED_FINDING_TYPE_ORDER,
     APPROVED_METHODOLOGY_RUNTIME_CONFIG,
+    APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE,
     APPROVED_RECOMMENDATION_LABEL_ORDER,
     APPROVED_RISK_LEVEL_ORDER,
     APPROVED_SEVERITY_LEVEL_ORDER,
@@ -22,12 +23,74 @@ from assessment.approved_methodology_runtime_config import (  # noqa: E402
     RISK_DECISION_TABLE_SET_VERSION,
     SEVERITY_DECISION_TABLE_SET_VERSION,
     DecisionRuleRuntimeConfig,
+    approved_recommendation_action_text,
     validate_approved_methodology_runtime_config,
 )
 from assessment.methodology_config import METHODOLOGY_VERSION  # noqa: E402
 
 
 class ApprovedMethodologyRuntimeConfigTests(unittest.TestCase):
+    def test_approved_recommendation_action_text_is_exact_and_rule_bound(self):
+        expected = {
+            "recommendation-v1-deficiency-critical-immediate": "Take immediate action in response to the identified critical deficiency.",
+            "recommendation-v1-deficiency-high-priority": "Take near-term action in response to the identified high-severity deficiency.",
+            "recommendation-v1-deficiency-medium-planned": "Plan an improvement in response to the identified deficiency affecting effectiveness or consistency.",
+            "recommendation-v1-deficiency-low-planned": "Plan an improvement for the identified limited weakness.",
+            "recommendation-v1-observation-monitor": "Monitor the identified observation as assessment or improvement context.",
+            "recommendation-v1-strength-best-practice": "Consider preserving or reusing the practice reflected in the identified strength.",
+            "recommendation-v1-opportunity-best-practice": "Consider the identified opportunity as a basis for practice improvement.",
+            "recommendation-v1-no-findings-monitor": "Monitor the assessment context after this completed assessment, which generated no findings.",
+        }
+        self.assertEqual(dict(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE), expected)
+        emitting = {
+            rule_id for rule_id, rule in
+            APPROVED_METHODOLOGY_RUNTIME_CONFIG.recommendation_decision_rules.items()
+            if rule.output
+        }
+        self.assertEqual(set(expected), emitting)
+        for rule_id, statement in expected.items():
+            with self.subTest(rule_id=rule_id):
+                self.assertEqual(
+                    approved_recommendation_action_text(
+                        rule_id, RECOMMENDATION_DECISION_TABLE_SET_VERSION,
+                        METHODOLOGY_VERSION,
+                    ), statement,
+                )
+        with self.assertRaises(TypeError):
+            APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE["new-rule"] = "text"
+
+    def test_recommendation_action_text_lookup_fails_closed(self):
+        def lookup(rule_id, table_version=RECOMMENDATION_DECISION_TABLE_SET_VERSION,
+                   methodology_version=METHODOLOGY_VERSION, **kwargs):
+            return approved_recommendation_action_text(
+                rule_id, table_version, methodology_version, **kwargs
+            )
+
+        for rule_id in (
+            "unknown-rule", "priority-action",
+            "recommendation-v1-reject-missing-risk", None,
+        ):
+            with self.subTest(rule_id=rule_id), self.assertRaises(ValueError):
+                lookup(rule_id)
+        for table_version, methodology_version in (
+            ("unsupported-table", METHODOLOGY_VERSION),
+            (RECOMMENDATION_DECISION_TABLE_SET_VERSION, "unsupported-methodology"),
+        ):
+            with self.subTest(table_version=table_version,
+                              methodology_version=methodology_version), self.assertRaises(ValueError):
+                lookup("recommendation-v1-deficiency-critical-immediate",
+                       table_version, methodology_version)
+        missing = dict(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE)
+        del missing["recommendation-v1-deficiency-critical-immediate"]
+        altered = dict(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE)
+        altered["recommendation-v1-deficiency-critical-immediate"] = "Conflicting text."
+        extra = dict(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE)
+        extra["recommendation-v1-reject-missing-risk"] = "Unsupported text."
+        for mapping in (missing, altered, extra):
+            with self.subTest(mapping=mapping), self.assertRaises(ValueError):
+                lookup("recommendation-v1-deficiency-high-priority",
+                       action_text_by_rule=mapping)
+
     def test_approved_runtime_config_validates(self):
         validate_approved_methodology_runtime_config(
             APPROVED_METHODOLOGY_RUNTIME_CONFIG
