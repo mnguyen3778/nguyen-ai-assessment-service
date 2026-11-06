@@ -1,4 +1,4 @@
-"""Internal producer-snapshot-attestation-v1 output verification adapter.
+"""Internal, explicitly versioned producer snapshot attestation adapter.
 
 Byte contract:
 * The snapshot is the *unchanged* UTF-8 JSON bytes supplied to ``issue`` and
@@ -14,13 +14,16 @@ Byte contract:
   escapes where defined, otherwise lowercase ``\\u00xx``; slash and other
   Unicode scalars remain literal. Integers use base-10 digits with an optional
   leading minus and no leading zeros. No Unicode normalization is performed.
-  SHA-256 hashes b"NGUYEN-CONCLUSIONS-v1\\0" followed by these UTF-8 bytes.
-* The Ed25519 payload is b"NGUYEN-ATTESTATION-v1\\0" followed, in
+  SHA-256 hashes the version-bound conclusions domain followed by these UTF-8
+  bytes. The v3 profile includes the exact approved recommendation action text.
+* The Ed25519 payload uses the version-bound attestation domain followed, in
   SIDECAR_FIELDS order except signature, by a four-byte unsigned big-endian
   length and the exact UTF-8 bytes of each field value. All fields are strings.
   Digests are lowercase hex; signature is canonical padded standard Base64.
 
-This module signs no business decisions and creates no public response fields.
+The historical v1 profile remains the default. The v2 profile attests only
+explicitly selected local package v3 snapshots. This module signs no business
+decisions and creates no public response fields.
 """
 
 import base64
@@ -39,6 +42,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
 )
 from assessment.executive_assessment_snapshot import (
@@ -51,10 +55,14 @@ from assessment.methodology_config import METHODOLOGY_VERSION
 
 VERIFICATION_CONTRACT_VERSION = "producer-snapshot-attestation-v1"
 CANONICALIZATION_ID = "governed-conclusions-json-v1"
+V3_VERIFICATION_CONTRACT_VERSION = "producer-snapshot-attestation-v2"
+V3_CANONICALIZATION_ID = "governed-conclusions-json-v2"
 DIGEST_ALGORITHM = "SHA-256"
 _SNAPSHOT_DOMAIN = b"NGUYEN-SNAPSHOT-v1\x00"
 _CONCLUSIONS_DOMAIN = b"NGUYEN-CONCLUSIONS-v1\x00"
 _SIGNATURE_DOMAIN = b"NGUYEN-ATTESTATION-v1\x00"
+_V3_CONCLUSIONS_DOMAIN = b"NGUYEN-CONCLUSIONS-v2\x00"
+_V3_SIGNATURE_DOMAIN = b"NGUYEN-ATTESTATION-v2\x00"
 SIDECAR_FIELDS = (
     "verificationContractVersion", "issuerId", "producerReleaseCommit",
     "producerSnapshotIdentity", "snapshotResponseContractVersion",
@@ -83,6 +91,7 @@ _RECOMMENDATION_FIELDS = (
     "findingId", "recommendationClassification",
     "recommendationDecisionIdentifier", "recommendationDecisionTableVersion",
 )
+_V3_RECOMMENDATION_FIELDS = _RECOMMENDATION_FIELDS + ("recommendationActionText",)
 _SUMMARY_FIELDS = ("findingCount", "sectionText")
 _SECTION_FIELDS = (
     "overall-assessment-overview", "business-capability-highlights",
@@ -173,7 +182,20 @@ def _parse_snapshot(snapshot_bytes: bytes) -> dict:
     return value
 
 
-def _snapshot_versions(snapshot: dict) -> dict[str, str]:
+def _profile(verification_contract_version: str) -> tuple[str, str, bytes, bytes]:
+    if verification_contract_version == VERIFICATION_CONTRACT_VERSION:
+        return (GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                CANONICALIZATION_ID, _CONCLUSIONS_DOMAIN, _SIGNATURE_DOMAIN)
+    if verification_contract_version == V3_VERIFICATION_CONTRACT_VERSION:
+        return (ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                V3_CANONICALIZATION_ID, _V3_CONCLUSIONS_DOMAIN, _V3_SIGNATURE_DOMAIN)
+    raise AttestationError(FailureCode.UNSUPPORTED_ATTESTATION_VERSION)
+
+
+def _snapshot_versions(
+    snapshot: dict,
+    verification_contract_version: str = VERIFICATION_CONTRACT_VERSION,
+) -> dict[str, str]:
     try:
         metadata = snapshot["businessDecisionPackage"]["versionMetadata"]
         versions = {
@@ -186,7 +208,7 @@ def _snapshot_versions(snapshot: dict) -> dict[str, str]:
         raise AttestationError(FailureCode.UNSUPPORTED_PRODUCER_CONTRACT) from None
     expected = {
         "snapshotResponseContractVersion": EXECUTIVE_RUNTIME_RESPONSE_CONTRACT_VERSION,
-        "packageContractVersion": GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        "packageContractVersion": _profile(verification_contract_version)[0],
         "assessmentVersion": EXECUTIVE_ASSESSMENT_VERSION_V2,
         "methodologyVersion": METHODOLOGY_VERSION,
     }
@@ -195,7 +217,10 @@ def _snapshot_versions(snapshot: dict) -> dict[str, str]:
     return versions
 
 
-def _validated_snapshot(snapshot_bytes: bytes) -> tuple[dict, dict[str, str]]:
+def _validated_snapshot(
+    snapshot_bytes: bytes,
+    verification_contract_version: str = VERIFICATION_CONTRACT_VERSION,
+) -> tuple[dict, dict[str, str]]:
     snapshot = _parse_snapshot(snapshot_bytes)
     try:
         result = validate_executive_assessment_snapshot_serialization(snapshot)
@@ -203,11 +228,11 @@ def _validated_snapshot(snapshot_bytes: bytes) -> tuple[dict, dict[str, str]]:
         raise AttestationError(FailureCode.PRODUCER_VALIDATION_FAILURE) from None
     if getattr(result, "is_valid", None) is not True:
         try:
-            _snapshot_versions(snapshot)
+            _snapshot_versions(snapshot, verification_contract_version)
         except AttestationError as exc:
             raise exc from None
         raise AttestationError(FailureCode.PRODUCER_VALIDATION_FAILURE)
-    versions = _snapshot_versions(snapshot)
+    versions = _snapshot_versions(snapshot, verification_contract_version)
     return snapshot, versions
 
 
@@ -235,7 +260,10 @@ def _string_array(value: object) -> list[str]:
     return [_string(item) for item in value]
 
 
-def _canonical_conclusions(snapshot: dict) -> bytes:
+def _canonical_conclusions(
+    snapshot: dict,
+    verification_contract_version: str = VERIFICATION_CONTRACT_VERSION,
+) -> bytes:
     try:
         governed = snapshot["businessDecisionPackage"]["governedConclusions"]
         groups = _ordered_object(governed, _GROUP_FIELDS)
@@ -252,13 +280,16 @@ def _canonical_conclusions(snapshot: dict) -> bytes:
                         _string(row[field]))
                 for field in _FINDING_FIELDS
             })
+        recommendation_fields = (_V3_RECOMMENDATION_FIELDS if verification_contract_version ==
+                                 V3_VERIFICATION_CONTRACT_VERSION else _RECOMMENDATION_FIELDS)
+        _profile(verification_contract_version)
         ordered_recommendations = []
         for item in recommendations:
-            row = _ordered_object(item, _RECOMMENDATION_FIELDS)
+            row = _ordered_object(item, recommendation_fields)
             ordered_recommendations.append({
                 field: (None if field == "findingId" and row[field] is None else
                         _string(row[field]))
-                for field in _RECOMMENDATION_FIELDS
+                for field in recommendation_fields
             })
         risk = _ordered_object(groups["assessmentRisk"], _RISK_FIELDS)
         confidence = _ordered_object(groups["confidence"], _CONFIDENCE_FIELDS)
@@ -287,8 +318,11 @@ def _digest(domain: bytes, content: bytes) -> str:
     return hashlib.sha256(domain + content).hexdigest()
 
 
-def _signed_payload(sidecar: Mapping[str, str]) -> bytes:
-    parts = [_SIGNATURE_DOMAIN]
+def _signed_payload(
+    sidecar: Mapping[str, str],
+    verification_contract_version: str = VERIFICATION_CONTRACT_VERSION,
+) -> bytes:
+    parts = [_profile(verification_contract_version)[3]]
     for field in SIDECAR_FIELDS[:-1]:
         encoded = sidecar[field].encode("utf-8", "strict")
         parts.append(len(encoded).to_bytes(4, "big"))
@@ -300,7 +334,10 @@ def _identifier(value: str) -> bool:
     return type(value) is str and _IDENTIFIER.fullmatch(value) is not None
 
 
-def _sidecar(sidecar: object) -> dict[str, str]:
+def _sidecar(
+    sidecar: object,
+    verification_contract_version: str = VERIFICATION_CONTRACT_VERSION,
+) -> dict[str, str]:
     if sidecar is None:
         raise AttestationError(FailureCode.MISSING_ATTESTATION)
     if type(sidecar) is not dict:
@@ -317,9 +354,9 @@ def _sidecar(sidecar: object) -> dict[str, str]:
             sidecar[field].encode("utf-8", "strict")
     except UnicodeError:
         raise AttestationError(FailureCode.MALFORMED_ATTESTATION) from None
-    if sidecar["verificationContractVersion"] != VERIFICATION_CONTRACT_VERSION:
+    if sidecar["verificationContractVersion"] != verification_contract_version:
         raise AttestationError(FailureCode.UNSUPPORTED_ATTESTATION_VERSION)
-    if sidecar["canonicalizationId"] != CANONICALIZATION_ID or sidecar["digestAlgorithm"] != DIGEST_ALGORITHM:
+    if sidecar["canonicalizationId"] != _profile(verification_contract_version)[1] or sidecar["digestAlgorithm"] != DIGEST_ALGORITHM:
         raise AttestationError(FailureCode.MALFORMED_ATTESTATION)
     if not _identifier(sidecar["issuerId"]) or not _identifier(sidecar["keyId"]):
         raise AttestationError(FailureCode.MALFORMED_ATTESTATION)
@@ -343,7 +380,9 @@ class ProducerSnapshotIssuer:
     """Owner-constructed issuer; snapshot callers cannot supply a signing key."""
 
     def __init__(self, signing_key: Ed25519PrivateKey, *, issuer_id: str,
-                 key_id: str, producer_release_commit: str):
+                 key_id: str, producer_release_commit: str,
+                 verification_contract_version: str = VERIFICATION_CONTRACT_VERSION):
+        _profile(verification_contract_version)
         if not isinstance(signing_key, Ed25519PrivateKey):
             raise TypeError("An Ed25519 signing capability is required.")
         if not _identifier(issuer_id) or not _identifier(key_id) or type(producer_release_commit) is not str or _COMMIT.fullmatch(producer_release_commit) is None:
@@ -352,25 +391,26 @@ class ProducerSnapshotIssuer:
         self._issuer_id = issuer_id
         self._key_id = key_id
         self._release = producer_release_commit
+        self._verification_contract_version = verification_contract_version
 
     def issue(self, snapshot_bytes: bytes) -> dict[str, str]:
-        snapshot, versions = _validated_snapshot(snapshot_bytes)
-        conclusions = _canonical_conclusions(snapshot)
+        snapshot, versions = _validated_snapshot(snapshot_bytes, self._verification_contract_version)
+        conclusions = _canonical_conclusions(snapshot, self._verification_contract_version)
         snapshot_digest = _digest(_SNAPSHOT_DOMAIN, snapshot_bytes)
         sidecar = {
-            "verificationContractVersion": VERIFICATION_CONTRACT_VERSION,
+            "verificationContractVersion": self._verification_contract_version,
             "issuerId": self._issuer_id,
             "producerReleaseCommit": self._release,
             "producerSnapshotIdentity": "sha256:" + snapshot_digest,
             **versions,
-            "canonicalizationId": CANONICALIZATION_ID,
+            "canonicalizationId": _profile(self._verification_contract_version)[1],
             "digestAlgorithm": DIGEST_ALGORITHM,
             "snapshotDigest": snapshot_digest,
-            "governedConclusionsDigest": _digest(_CONCLUSIONS_DOMAIN, conclusions),
+            "governedConclusionsDigest": _digest(_profile(self._verification_contract_version)[2], conclusions),
             "keyId": self._key_id,
         }
         sidecar["signature"] = base64.b64encode(
-            self._signing_key.sign(_signed_payload(sidecar))
+            self._signing_key.sign(_signed_payload(sidecar, self._verification_contract_version))
         ).decode("ascii")
         return sidecar
 
@@ -380,7 +420,9 @@ class ProducerSnapshotVerifier:
 
     def __init__(self, *, trusted_issuer_id: str,
                  trusted_keys: Mapping[str, Ed25519PublicKey],
-                 expected_release_commit: str):
+                 expected_release_commit: str,
+                 verification_contract_version: str = VERIFICATION_CONTRACT_VERSION):
+        _profile(verification_contract_version)
         if not _identifier(trusted_issuer_id) or type(expected_release_commit) is not str or _COMMIT.fullmatch(expected_release_commit) is None:
             raise ValueError("Invalid verifier configuration.")
         if type(trusted_keys) is not dict or not trusted_keys or any(
@@ -391,9 +433,10 @@ class ProducerSnapshotVerifier:
         self._trusted_issuer_id = trusted_issuer_id
         self._trusted_keys = dict(trusted_keys)
         self._release = expected_release_commit
+        self._verification_contract_version = verification_contract_version
 
     def verify(self, snapshot_bytes: bytes, sidecar: object) -> None:
-        attestation = _sidecar(sidecar)
+        attestation = _sidecar(sidecar, self._verification_contract_version)
         if attestation["issuerId"] != self._trusted_issuer_id:
             raise AttestationError(FailureCode.UNKNOWN_ISSUER)
         key = self._trusted_keys.get(attestation["keyId"])
@@ -401,7 +444,7 @@ class ProducerSnapshotVerifier:
             raise AttestationError(FailureCode.UNKNOWN_KEY_ID)
         try:
             key.verify(base64.b64decode(attestation["signature"], validate=True),
-                       _signed_payload(attestation))
+                       _signed_payload(attestation, self._verification_contract_version))
         except (InvalidSignature, ValueError, TypeError) as exc:
             raise AttestationError(FailureCode.INVALID_SIGNATURE) from None
         if attestation["producerReleaseCommit"] != self._release:
@@ -412,9 +455,9 @@ class ProducerSnapshotVerifier:
             raise AttestationError(FailureCode.SNAPSHOT_DIGEST_MISMATCH)
         if attestation["producerSnapshotIdentity"] != "sha256:" + digest:
             raise AttestationError(FailureCode.SNAPSHOT_IDENTITY_MISMATCH)
-        validated, versions = _validated_snapshot(snapshot_bytes)
+        validated, versions = _validated_snapshot(snapshot_bytes, self._verification_contract_version)
         if any(attestation[field] != versions[field] for field in versions):
             raise AttestationError(FailureCode.PRODUCER_VERSION_MISMATCH)
-        conclusions = _canonical_conclusions(validated)
-        if attestation["governedConclusionsDigest"] != _digest(_CONCLUSIONS_DOMAIN, conclusions):
+        conclusions = _canonical_conclusions(validated, self._verification_contract_version)
+        if attestation["governedConclusionsDigest"] != _digest(_profile(self._verification_contract_version)[2], conclusions):
             raise AttestationError(FailureCode.CONCLUSIONS_DIGEST_MISMATCH)

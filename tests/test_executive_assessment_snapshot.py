@@ -740,7 +740,7 @@ class ExecutiveAssessmentSnapshotTests(unittest.TestCase):
             issue_codes(validation_result),
         )
         self.assertIn(
-            "package-serialized-contract-version-mismatch",
+            "package-serialized-governed-version-mismatch",
             issue_codes(validation_result),
         )
 

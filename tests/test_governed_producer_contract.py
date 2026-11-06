@@ -104,7 +104,8 @@ class GovernedProducerContractTests(unittest.TestCase):
                                      APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE[
                                          old_row["recommendationDecisionIdentifier"]])
                     observed_rules.add(old_row["recommendationDecisionIdentifier"])
-                self.assertFalse(validate_business_decision_package_serialization(new).is_valid)
+                self.assertTrue(validate_business_decision_package_serialization(new).is_valid)
+                self.assertTrue(validate_business_decision_package(v3).is_valid)
         self.assertEqual(observed_rules, set(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE))
 
     def test_no_findings_v3_is_local_and_v2_snapshot_has_no_action_text(self):

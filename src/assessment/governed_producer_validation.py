@@ -13,10 +13,29 @@ from assessment.approved_methodology_runtime_config import (
     RECOMMENDATION_DECISION_TABLE_SET_VERSION,
     SEVERITY_DECISION_TABLE_SET_VERSION,
     APPROVED_METHODOLOGY_RUNTIME_CONFIG,
+    NO_FINDINGS_RECOMMENDATION_RULE_ID,
+    approved_recommendation_action_text,
 )
+from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+)
+from assessment.governed_decision_runtime import RECOMMENDATION_RULE_BY_FINDING
+from assessment.governed_assessment_input import FINDING_CONSEQUENCE_RULES
+from assessment.methodology_config import METHODOLOGY_VERSION
 
 
-def validate_governed_conclusions(value: object) -> None:
+def validate_governed_conclusions(
+    value: object,
+    *,
+    package_version: str = GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+) -> None:
+    if package_version not in (
+        GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    ):
+        raise ValueError("Unsupported governed package version.")
+    v3 = package_version == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
     if not isinstance(value, Mapping) or tuple(value) != (
         "severityAssignedFindings", "assessmentRisk", "confidence",
         "recommendations", "executiveSummary",
@@ -59,6 +78,10 @@ def validate_governed_conclusions(value: object) -> None:
         rule = APPROVED_METHODOLOGY_RUNTIME_CONFIG.severity_decision_rules.get(item["severityDecisionIdentifier"])
         if rule is None or rule.output != item["severityClassification"]:
             raise ValueError("Severity identifier and classification disagree.")
+        if v3 and item["severityDecisionIdentifier"] != FINDING_CONSEQUENCE_RULES.get((
+            item["findingType"], item["businessConsequenceBasis"],
+        )):
+            raise ValueError("Finding severity rule does not match its type and consequence.")
         ids.append(item["findingId"])
         severities.append(item["severityClassification"])
     if ids != sorted(set(ids)):
@@ -73,10 +96,11 @@ def validate_governed_conclusions(value: object) -> None:
     if len(recommendations) != max(1, len(ids)):
         raise ValueError("Recommendation collection is incomplete.")
     for sequence, item in enumerate(recommendations):
-        if not isinstance(item, Mapping) or tuple(item) != (
+        fields = (
             "findingId", "recommendationClassification", "recommendationDecisionIdentifier",
             "recommendationDecisionTableVersion",
-        ):
+        ) + (("recommendationActionText",) if v3 else ())
+        if not isinstance(item, Mapping) or tuple(item) != fields:
             raise ValueError("Malformed recommendation.")
         if item["findingId"] != (ids[sequence] if ids else None):
             raise ValueError("Recommendation identity or order mismatch.")
@@ -85,6 +109,25 @@ def validate_governed_conclusions(value: object) -> None:
         rule = APPROVED_METHODOLOGY_RUNTIME_CONFIG.recommendation_decision_rules.get(item["recommendationDecisionIdentifier"])
         if rule is None or rule.output != item["recommendationClassification"]:
             raise ValueError("Recommendation identifier and classification disagree.")
+        if v3:
+            if any(type(item[key]) is not str or not item[key] for key in fields[1:]):
+                raise ValueError("Recommendation fields must be nonempty strings.")
+            if ids:
+                finding = findings[sequence]
+                expected_rule = RECOMMENDATION_RULE_BY_FINDING.get((
+                    finding["findingType"], finding["severityClassification"],
+                ))
+                if item["recommendationDecisionIdentifier"] != expected_rule:
+                    raise ValueError("Recommendation rule does not match finding severity.")
+            elif item["recommendationDecisionIdentifier"] != NO_FINDINGS_RECOMMENDATION_RULE_ID:
+                raise ValueError("Invalid no-findings recommendation rule.")
+            expected_text = approved_recommendation_action_text(
+                item["recommendationDecisionIdentifier"],
+                item["recommendationDecisionTableVersion"],
+                METHODOLOGY_VERSION,
+            )
+            if item["recommendationActionText"] != expected_text:
+                raise ValueError("Recommendation action text differs from approved methodology.")
     if not ids and (risk["riskClassification"] != "minimal-informational" or
                     recommendations[0]["recommendationDecisionIdentifier"] != "recommendation-v1-no-findings-monitor"):
         raise ValueError("Malformed empty-findings conclusion.")

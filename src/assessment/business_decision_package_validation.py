@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_LIMITATIONS,
@@ -30,12 +31,18 @@ GOVERNED_ROOT_FIELD_ORDER = ROOT_FIELD_ORDER + ("governedConclusions",)
 
 def _governed(package: BusinessDecisionPackage) -> bool:
     return (package.version_metadata is not None and
-            package.version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION)
+            package.version_metadata.contract_version in (
+                GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            ))
 
 
 def _serialized_governed(package: Mapping[str, Any]) -> bool:
     metadata = package.get("versionMetadata")
-    return isinstance(metadata, Mapping) and metadata.get("contractVersion") == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+    return isinstance(metadata, Mapping) and metadata.get("contractVersion") in (
+        GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    )
 
 
 @dataclass(frozen=True)
@@ -158,7 +165,10 @@ def validate_business_decision_package_serialization(
         if metadata.get("assessmentVersion") != EXECUTIVE_ASSESSMENT_VERSION_V2 or metadata.get("methodologyVersion") != METHODOLOGY_VERSION:
             issues.append(_issue("serialized-governed-version-mismatch", "$.versionMetadata", "Governed package version binding is invalid."))
         try:
-            validate_governed_conclusions(serialized_package.get("governedConclusions"))
+            validate_governed_conclusions(
+                serialized_package.get("governedConclusions"),
+                package_version=metadata.get("contractVersion"),
+            )
         except (ValueError, TypeError, KeyError) as exc:
             issues.append(_issue("invalid-governed-conclusions", "$.governedConclusions", str(exc)))
 
@@ -201,7 +211,7 @@ def _validate_version_metadata(
         return
 
     version_metadata = package.version_metadata
-    if version_metadata.contract_version not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
+    if version_metadata.contract_version not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
         issues.append(
             _issue(
                 "contract-version-mismatch",
@@ -449,7 +459,7 @@ def _validate_serialized_version_metadata(
         issues,
     )
 
-    if metadata.get("contractVersion") not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
+    if metadata.get("contractVersion") not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
         issues.append(
             _issue(
                 "serialized-contract-version-mismatch",
