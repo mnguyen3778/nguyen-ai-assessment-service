@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assessment.business_decision_package import (
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
@@ -277,7 +278,11 @@ def _validate_snapshot_package_version_compatibility(
         )
         return
 
-    if version_metadata.contract_version not in (BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION):
+    if version_metadata.contract_version not in (
+        BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+    ):
         issues.append(
             _issue(
                 "invalid-package-contract-version",
@@ -285,7 +290,13 @@ def _validate_snapshot_package_version_compatibility(
                 "Snapshot package contract version is not supported.",
             )
         )
-    expected_assessment_version = (EXECUTIVE_ASSESSMENT_VERSION_V2 if version_metadata.contract_version == GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION else EXECUTIVE_ASSESSMENT_VERSION)
+    expected_assessment_version = (
+        EXECUTIVE_ASSESSMENT_VERSION_V2
+        if version_metadata.contract_version in (
+            GOVERNED_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+        ) else EXECUTIVE_ASSESSMENT_VERSION
+    )
     if version_metadata.assessment_version != expected_assessment_version:
         issues.append(
             _issue(
@@ -357,6 +368,19 @@ def _validate_snapshot_response_status(
                     "Snapshot response status contains an unsupported value.",
                 )
             )
+
+    package = getattr(snapshot, "business_decision_package", None)
+    version_metadata = getattr(package, "version_metadata", None)
+    if (
+        getattr(version_metadata, "contract_version", None)
+        == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+        and response_status.production_authority != NOT_PRODUCTION_AUTHORITATIVE
+    ):
+        issues.append(_issue(
+            "v3-production-authority-not-supported",
+            "$.response_status.production_authority",
+            "Package v3 snapshots must remain local and nonproduction.",
+        ))
 
 
 def _validate_snapshot_response_contract_version(
@@ -508,6 +532,22 @@ def _validate_serialized_snapshot_package(
                 "Serialized snapshot BusinessDecisionPackage validation failed.",
             )
         )
+
+    package = serialized_snapshot.get("businessDecisionPackage")
+    metadata = package.get("versionMetadata") if isinstance(package, Mapping) else None
+    status = serialized_snapshot.get("responseStatus")
+    if (
+        isinstance(metadata, Mapping)
+        and metadata.get("contractVersion")
+        == ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION
+        and (not isinstance(status, Mapping)
+             or status.get("productionAuthority") != NOT_PRODUCTION_AUTHORITATIVE)
+    ):
+        issues.append(_issue(
+            "v3-production-authority-not-supported",
+            "$.responseStatus.productionAuthority",
+            "Package v3 snapshots must remain local and nonproduction.",
+        ))
 
 
 def _result(

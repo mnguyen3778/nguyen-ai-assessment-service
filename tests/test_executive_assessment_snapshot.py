@@ -387,7 +387,7 @@ class ExecutiveAssessmentSnapshotTests(unittest.TestCase):
             package,
             version_metadata=replace(
                 package.version_metadata,
-                contract_version="business-decision-package-v3",
+                contract_version="business-decision-package-v4",
             ),
         )
         snapshot = ExecutiveAssessmentSnapshot(successful_runtime_result())

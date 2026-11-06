@@ -1,33 +1,47 @@
+import copy
+import json
 import sys
 import unittest
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import assessment.executive_snapshot_handoff as handoff_module  # noqa: E402
 from assessment.business_decision_package import (  # noqa: E402
+    ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_COMPONENT_VERSIONS,
     BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
     BUSINESS_DECISION_PACKAGE_LIMITATIONS,
+)
+from assessment.approved_methodology_runtime_config import (  # noqa: E402
+    APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE,
 )
 from assessment.executive_orchestration import (  # noqa: E402
     INPUT_CONTRACT_FAILURE as ORCHESTRATION_INPUT_CONTRACT_FAILURE,
     ExecutiveOrchestrationFailure,
     ExecutiveOrchestrationResult,
     ValidatedCanonicalExecutiveAssessmentInput,
+    orchestrate_executive_assessment,
+)
+from assessment.executive_assessment_snapshot import (  # noqa: E402
+    validate_executive_assessment_snapshot_serialization,
 )
 from assessment.executive_runtime import (  # noqa: E402
     EXECUTIVE_ASSESSMENT_VERSION,
     EXECUTIVE_INTERNAL_ERROR,
     EXECUTIVE_RUNTIME_RESPONSE_CONTRACT_VERSION,
+    NOT_PRODUCTION_AUTHORITATIVE,
+    PRODUCTION_AUTHORITATIVE,
     ExecutiveRuntimeValidationIssue,
     ExecutiveRuntimeValidationResult,
     create_executive_runtime_error_response,
 )
 from assessment.executive_snapshot_handoff import (  # noqa: E402
+    ATTESTATION_FAILURE,
     INPUT_CONTRACT_FAILURE,
     ORCHESTRATION_FAILURE,
     RUNTIME_FAILURE,
@@ -38,6 +52,12 @@ from assessment.executive_snapshot_handoff import (  # noqa: E402
     ExecutiveSnapshotProductionResult,
     produce_executive_assessment_snapshot,
 )
+from assessment.governed_assessment_input import FindingInput  # noqa: E402
+from assessment.producer_snapshot_attestation import (  # noqa: E402
+    AttestationError, ProducerSnapshotIssuer, ProducerSnapshotVerifier,
+    V3_VERIFICATION_CONTRACT_VERSION,
+)
+from test_golden_fixture_regression import request  # noqa: E402
 from assessment.methodology_config import (  # noqa: E402
     BUSINESS_DECISION_METHODOLOGY,
     METHODOLOGY_VERSION,
@@ -64,7 +84,236 @@ def valid_canonical_input(scale_value=4, numeric_value=100):
     )
 
 
+def local_v3_authorities():
+    key = Ed25519PrivateKey.generate()
+    release = "a075a679a053ee9d0eb9a32d7f0ffa2dc796f0da"
+    issuer = ProducerSnapshotIssuer(
+        key, issuer_id="nguyen-ai-assessment", key_id="local-v3-handoff-test",
+        producer_release_commit=release,
+        verification_contract_version=V3_VERIFICATION_CONTRACT_VERSION,
+    )
+    verifier = ProducerSnapshotVerifier(
+        trusted_issuer_id="nguyen-ai-assessment",
+        trusted_keys={"local-v3-handoff-test": key.public_key()},
+        expected_release_commit=release,
+        verification_contract_version=V3_VERIFICATION_CONTRACT_VERSION,
+    )
+    return issuer, verifier
+
+
+def encode(snapshot):
+    return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 class ExecutiveSnapshotHandoffTests(unittest.TestCase):
+    def test_explicit_local_v3_handoff_preserves_eight_governed_scenarios(self):
+        issuer, verifier = local_v3_authorities()
+        cases = [
+            request(75, "adequate", "critical"),
+            request(75, "mixed-strong", "two-high"),
+            request(50, "adequate", "medium"),
+            request(50, "adequate", "low"),
+            request(100, "strong", "strength"),
+            request(50, "adequate", "none"),
+        ]
+        for kind, basis in (("Observation", "observation"),
+                            ("Opportunity", "opportunity")):
+            finding = FindingInput(
+                "finding-local-" + kind.lower(), "Local finding", "POC", (),
+                "fixture-input", kind, basis, ("fixture-input",),
+            )
+            cases.append(replace(request(50, "adequate", "none"), findings=(finding,)))
+
+        four_fields = (
+            "findingId", "recommendationClassification",
+            "recommendationDecisionIdentifier", "recommendationDecisionTableVersion",
+        )
+        seen = set()
+        for canonical in cases:
+            with self.subTest(findings=canonical.findings):
+                v2 = produce_executive_assessment_snapshot(canonical)
+                v3 = produce_executive_assessment_snapshot(
+                    canonical,
+                    local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                    local_v3_issuer=issuer, local_v3_verifier=verifier,
+                )
+                self.assertTrue(v2.is_success, v2.failure)
+                self.assertTrue(v3.is_success, v3.failure)
+                self.assertIsNone(v2.attestation_sidecar)
+                self.assertEqual(v3.serialized_snapshot["responseContractVersion"],
+                                 "executive-runtime-response-v1")
+                self.assertEqual(v3.serialized_snapshot["responseStatus"]["productionAuthority"],
+                                 NOT_PRODUCTION_AUTHORITATIVE)
+                self.assertEqual(v3.attestation_sidecar["verificationContractVersion"],
+                                 V3_VERIFICATION_CONTRACT_VERSION)
+                self.assertIsNone(verifier.verify(encode(v3.serialized_snapshot),
+                                                  v3.attestation_sidecar))
+                old = v2.serialized_snapshot["businessDecisionPackage"]
+                new = copy.deepcopy(v3.serialized_snapshot["businessDecisionPackage"])
+                self.assertEqual(new["versionMetadata"]["assessmentVersion"],
+                                 "nguyen-ai-executive-assessment-v2")
+                new["versionMetadata"]["contractVersion"] = "business-decision-package-v2"
+                for row in new["governedConclusions"]["recommendations"]:
+                    self.assertEqual(tuple(row), four_fields + ("recommendationActionText",))
+                    rule = row["recommendationDecisionIdentifier"]
+                    self.assertEqual(row["recommendationActionText"],
+                                     APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE[rule])
+                    seen.add(rule)
+                    del row["recommendationActionText"]
+                self.assertEqual(new, old)
+                self.assertTrue(all(tuple(row) == four_fields for row in
+                                    old["governedConclusions"]["recommendations"]))
+                if not canonical.findings:
+                    self.assertIsNone(new["governedConclusions"]["recommendations"][0]["findingId"])
+        self.assertEqual(seen, set(APPROVED_RECOMMENDATION_ACTION_TEXT_BY_RULE))
+
+    def test_local_v3_requires_explicit_valid_selection_and_attestation(self):
+        canonical = request(50, "adequate", "none")
+        issuer, verifier = local_v3_authorities()
+        with patch.object(handoff_module, "orchestrate_executive_assessment") as run:
+            for selection, signer, checker in (
+                (None, issuer, verifier),
+                (3, issuer, verifier),
+                (False, issuer, verifier),
+                ("business-decision-package-v4", issuer, verifier),
+                (ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, None, verifier),
+                (ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION, issuer, None),
+            ):
+                with self.subTest(selection=selection, signer=signer, checker=checker):
+                    result = produce_executive_assessment_snapshot(
+                        canonical, local_package_contract_version=selection,
+                        local_v3_issuer=signer, local_v3_verifier=checker,
+                    )
+                    self.assertFalse(result.is_success)
+                    self.assertEqual(result.failure.category, INPUT_CONTRACT_FAILURE)
+            legacy = produce_executive_assessment_snapshot(
+                valid_canonical_input(),
+                local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                local_v3_issuer=issuer, local_v3_verifier=verifier,
+            )
+            self.assertFalse(legacy.is_success)
+            self.assertEqual(legacy.failure.category, INPUT_CONTRACT_FAILURE)
+            run.assert_not_called()
+
+    def test_local_v3_handoff_rejects_invalid_evidence_and_cross_version_profiles(self):
+        canonical = request(75, "mixed-strong", "two-high")
+        issuer, verifier = local_v3_authorities()
+        selected = {
+            "local_package_contract_version": ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            "local_v3_issuer": issuer, "local_v3_verifier": verifier,
+        }
+        valid = produce_executive_assessment_snapshot(canonical, **selected)
+        self.assertTrue(valid.is_success, valid.failure)
+        raw = encode(valid.serialized_snapshot)
+        altered = copy.deepcopy(valid.serialized_snapshot)
+        altered["businessDecisionPackage"]["governedConclusions"]["recommendations"][0]["recommendationActionText"] = "changed"
+        with self.assertRaises(AttestationError):
+            verifier.verify(encode(altered), valid.attestation_sidecar)
+        altered = copy.deepcopy(valid.serialized_snapshot)
+        altered["businessDecisionPackage"]["governedConclusions"]["recommendations"].reverse()
+        with self.assertRaises(AttestationError):
+            verifier.verify(encode(altered), valid.attestation_sidecar)
+        altered = copy.deepcopy(valid.serialized_snapshot)
+        altered["businessDecisionPackage"]["governedConclusions"]["recommendations"][0]["findingId"] = "changed"
+        with self.assertRaises(AttestationError):
+            verifier.verify(encode(altered), valid.attestation_sidecar)
+        for edit in (
+            lambda s: s.update({"snapshotDigest": "0" * 64}),
+            lambda s: s.update({"signature": "AAAA"}),
+            lambda s: s.update({"canonicalizationId": "governed-conclusions-json-v1"}),
+            lambda s: s.update({"verificationContractVersion": "producer-snapshot-attestation-v1"}),
+        ):
+            sidecar = dict(valid.attestation_sidecar)
+            edit(sidecar)
+            with self.assertRaises(AttestationError):
+                verifier.verify(raw, sidecar)
+        with patch.object(issuer, "issue", return_value=None):
+            missing = produce_executive_assessment_snapshot(canonical, **selected)
+        self.assertFalse(missing.is_success)
+        self.assertEqual(missing.failure.category, ATTESTATION_FAILURE)
+        v2_issuer = ProducerSnapshotIssuer(
+            Ed25519PrivateKey.generate(), issuer_id="nguyen-ai-assessment",
+            key_id="local-v3-handoff-test",
+            producer_release_commit="a075a679a053ee9d0eb9a32d7f0ffa2dc796f0da",
+        )
+        wrong = produce_executive_assessment_snapshot(
+            canonical, **dict(selected, local_v3_issuer=v2_issuer))
+        self.assertFalse(wrong.is_success)
+        self.assertEqual(wrong.failure.category, ATTESTATION_FAILURE)
+
+        genuine_issue = issuer.issue
+        for field, bad_value in (("snapshotDigest", "0" * 64),
+                                 ("signature", "AAAA")):
+            def corrupted_issue(snapshot_bytes, field=field, bad_value=bad_value):
+                sidecar = genuine_issue(snapshot_bytes)
+                sidecar[field] = bad_value
+                return sidecar
+
+            with patch.object(issuer, "issue", side_effect=corrupted_issue):
+                rejected = produce_executive_assessment_snapshot(canonical, **selected)
+            self.assertFalse(rejected.is_success)
+            self.assertEqual(rejected.failure.category, ATTESTATION_FAILURE)
+            self.assertIsNone(rejected.serialized_snapshot)
+
+    def test_local_v3_handoff_rejects_substituted_or_invalid_snapshot_content(self):
+        canonical = request(50, "adequate", "medium")
+        issuer, verifier = local_v3_authorities()
+        selected = {
+            "local_package_contract_version": ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+            "local_v3_issuer": issuer, "local_v3_verifier": verifier,
+        }
+        v2_orchestration = orchestrate_executive_assessment(canonical)
+        with patch.object(handoff_module, "orchestrate_executive_assessment",
+                          return_value=v2_orchestration):
+            substituted = produce_executive_assessment_snapshot(canonical, **selected)
+        self.assertFalse(substituted.is_success)
+        self.assertEqual(substituted.failure.category, RUNTIME_FAILURE)
+
+        original_to_dict = handoff_module.ExecutiveAssessmentSnapshot.to_dict
+
+        def altered_text(snapshot):
+            serialized = original_to_dict(snapshot)
+            serialized["businessDecisionPackage"]["governedConclusions"]["recommendations"][0]["recommendationActionText"] = "unapproved"
+            return serialized
+
+        with patch.object(handoff_module.ExecutiveAssessmentSnapshot, "to_dict",
+                          altered_text), patch.object(issuer, "issue") as sign:
+            invalid = produce_executive_assessment_snapshot(canonical, **selected)
+        self.assertFalse(invalid.is_success)
+        self.assertEqual(invalid.failure.category, SNAPSHOT_SERIALIZATION_VALIDATION_FAILURE)
+        sign.assert_not_called()
+
+        valid = produce_executive_assessment_snapshot(canonical, **selected)
+        self.assertTrue(valid.is_success, valid.failure)
+        serialized = copy.deepcopy(valid.serialized_snapshot)
+        serialized["responseStatus"]["productionAuthority"] = PRODUCTION_AUTHORITATIVE
+        self.assertFalse(validate_executive_assessment_snapshot_serialization(serialized).is_valid)
+        with self.assertRaises(AttestationError):
+            issuer.issue(encode(serialized))
+
+    def test_local_v3_handoff_rejects_production_authority(self):
+        canonical = request(50, "adequate", "none")
+        issuer, verifier = local_v3_authorities()
+        real_execute = handoff_module.ExecutiveRuntime.execute
+
+        def authoritative(runtime, *args, **kwargs):
+            result = real_execute(runtime, *args, **kwargs)
+            success = replace(result.success, response_status=replace(
+                result.success.response_status,
+                production_authority=PRODUCTION_AUTHORITATIVE,
+            ))
+            return replace(result, success=success)
+
+        with patch.object(handoff_module.ExecutiveRuntime, "execute", authoritative):
+            result = produce_executive_assessment_snapshot(
+                canonical,
+                local_package_contract_version=ACTION_TEXT_BUSINESS_DECISION_PACKAGE_CONTRACT_VERSION,
+                local_v3_issuer=issuer, local_v3_verifier=verifier,
+            )
+        self.assertFalse(result.is_success)
+        self.assertEqual(result.failure.category, RUNTIME_FAILURE)
+        self.assertIsNone(result.serialized_snapshot)
+
     def test_snapshot_production_is_deterministic(self):
         canonical_input = valid_canonical_input(scale_value=3, numeric_value=80)
 
