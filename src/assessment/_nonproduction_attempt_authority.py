@@ -163,6 +163,7 @@ class _AttemptAuthority:
     scope: _Scope
     expectation: Callable[[], _ExpectedHistory | None] | None = field(default=None, repr=False)
     grants: tuple[_Grant, ...] = field(default=(), repr=False)
+    mutation_expectation: Callable[[str], _ExpectedHistory | None] | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if (
@@ -174,6 +175,7 @@ class _AttemptAuthority:
             or not isinstance(self.directory, Path) or not self.directory.is_absolute()
             or not self.directory.name or self.directory.resolve() != self.directory
             or (self.expectation is not None and not callable(self.expectation))
+            or (self.mutation_expectation is not None and not callable(self.mutation_expectation))
             or type(self.grants) is not tuple or any(type(grant) is not _Grant for grant in self.grants)
         ):
             raise _Rejected("invalid nonproduction authority configuration")
@@ -270,15 +272,17 @@ class _AttemptAuthority:
     def _digest(self, history):
         return sha256(json.dumps(history, separators=(",", ":")).encode()).hexdigest()
 
-    def _confirmed_history(self, db):
+    def _confirmed_history(self, db, *, mutation=False):
         history = self._history(db)
-        if self.expectation is None:
-            raise _Stale("independent history expectation unavailable")
-        expected = self.expectation()
+        actual = self._digest(history)
+        if mutation and self.mutation_expectation is not None:
+            expected = self.mutation_expectation(actual)
+        else:
+            expected = self.expectation() if self.expectation is not None else None
         if (
             type(expected) is not _ExpectedHistory or expected.scope != self.scope
             or expected.source_reference != self.source_reference
-            or expected.history_digest != self._digest(history)
+            or expected.history_digest != actual
         ):
             raise _Stale("independent history expectation mismatch")
         return history
@@ -300,7 +304,7 @@ class _AttemptAuthority:
             raise _Rejected("issuance scope mismatch")
         self._require_grant(grant, "issue", scope)
         with self._transaction() as db:
-            history = self._confirmed_history(db)
+            history = self._confirmed_history(db, mutation=True)
             if history:
                 raise _Rejected("scope already has an issued Attempt")
             attempt = _PREFIX + uuid4().hex
@@ -311,7 +315,7 @@ class _AttemptAuthority:
             raise _Rejected("exact Attempt and expected revision required")
         self._require_grant(grant, "invalidate", attempt_reference)
         with self._transaction() as db:
-            history = self._confirmed_history(db)
+            history = self._confirmed_history(db, mutation=True)
             if not history or history[-1][1] != attempt_reference:
                 raise _Rejected("wrong Attempt")
             if str(history[-1][0]) != expected_revision:
